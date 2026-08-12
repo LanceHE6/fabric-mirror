@@ -1,6 +1,6 @@
 # Mirror — Fabric 单服务端伪独立镜像实例
 
-在单个 Fabric 服务端进程中运行一个独立的从属 Minecraft 服务端实例作为镜像实验服。玩家通过指令透明切换，无需客户端断开重连，无需外部群组代理。
+在单个 Fabric 服务端进程中运行独立的镜像世界实例。玩家通过指令在服务端内部直接切换世界，无需断开连接、无需额外端口。
 
 ## 架构
 
@@ -9,20 +9,24 @@
 │                    JVM 进程                          │
 │                                                      │
 │  ┌──────────────────┐    ┌──────────────────────┐   │
-│  │   主服务端        │    │   镜像实例 (MirrorServer)│   │
-│  │   端口: 25565     │    │   端口: 25566          │   │
-│  │   世界: world/    │    │   世界: mirror_world/  │   │
-│  │   配置: config/   │    │   配置: config/mirror/ │   │
+│  │   主服世界         │    │   镜像世界             │   │
+│  │   minecraft:      │    │   mirror:overworld   │   │
+│  │   overworld       │    │   mirror:the_nether  │   │
+│  │   the_nether      │    │   mirror:the_end     │   │
+│  │   the_end         │    │                      │   │
+│  │   数据: world/    │    │   数据: mirror_world/│   │
 │  └────────┬─────────┘    └───────────┬──────────┘   │
 │           │                          │               │
-│           │  WorldSyncManager        │               │
-│           │  (文件复制+热重载) ──────▶│               │
-│           │                          │               │
-│           │  Transfer 包             │               │
+│           │  teleportTo (进程内传送)  │               │
 │           │◀────────────────────────▶│               │
+│           │                          │               │
+│           │  WorldSyncManager        │               │
+│           │  (FileChannel 复制)      │               │
+│           │  + reloadWorlds 热重载   │               │
 │                                                      │
 │  共享: BuiltInRegistries, DataFixer, Services        │
-│  隔离: Thread, ServerLevel, PlayerList, Network       │
+│  隔离: Thread, ServerLevel, 世界数据                  │
+│  Mixin: PortalRedirect (传送门), LevelTick (独立tick) │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -31,41 +35,38 @@
 ### 构建
 
 ```bash
-# JDK 25 + Gradle 9.5.0
 export JAVA_HOME=/opt/jdk-25
 ./gradlew build
-# JAR 输出: mc-26.2/build/libs/mirror-mc26.2-0.1.0-Alpha.jar
+# JAR: mc-26.2/build/libs/mirror-mc26.2-0.1.0-Alpha.jar
 ```
 
 ### 安装
 
-将 JAR 放入服务端 `mods/` 目录，启动服务端。
+将 JAR 放入 `mods/` 目录，启动服务端。首次启动自动生成 `config/mirror/mirror.json`。
 
-首次启动后会自动生成配置文件 `config/mirror/mirror.json`。
-
-### 启用
-
-配置文件 `config/mirror/mirror.json` 中设置 `enabled: true`（默认），或使用指令控制：
+### 基本使用
 
 ```
-/mirror start     # 启动镜像实例
-/mirror stop      # 停止镜像实例
-/mirror status    # 查看状态
+/mirror start              # 启动镜像实例
+/mirror sync confirm       # 同步主服世界 → 镜像
+/mirror goto               # 进入镜像世界
+/mirror return             # 返回主服
+/mirror stop               # 停止镜像实例
 ```
 
 ## 指令参考
 
 | 指令 | 权限 | 说明 |
 |------|------|------|
-| `/mirror status` | 所有人 | 查看镜像实例状态（运行态/玩家数/TPS） |
-| `/mirror start` | OP Lv3 | 启动镜像实例（加载世界+网络监听） |
-| `/mirror stop` | OP Lv3 | 安全停止镜像实例 |
-| `/mirror sync` | 所有人 | 预览世界同步信息 |
-| `/mirror sync confirm` | 所有人 | 完整同步主服世界→镜像+热重载 |
-| `/mirror sync incremental` | 所有人 | 增量同步（仅变更的 region 文件） |
-| `/mirror goto` | 所有人 | 传送到镜像实例 |
-| `/mirror return` | 所有人 | 从镜像返回主服 |
-| `/mirror test` | OP Lv3 | Phase 1 诊断工具 |
+| `/mirror status` | 所有人 | 查看镜像实例状态 |
+| `/mirror start` | OP Lv3 | 启动镜像实例 |
+| `/mirror stop` | OP Lv3 | 停止镜像实例 |
+| `/mirror sync` | 所有人 | 预览同步信息 |
+| `/mirror sync confirm` | 所有人 | 同步 + 热重载 |
+| `/mirror sync incremental` | 所有人 | 增量同步（仅变更文件） |
+| `/mirror goto` | 所有人 | 进入镜像世界（进程内传送） |
+| `/mirror return` | 所有人 | 返回主服 |
+| `/mirror test` | OP Lv3 | 诊断工具 |
 
 ## 配置文件
 
@@ -76,93 +77,89 @@ export JAVA_HOME=/opt/jdk-25
   "mirror": {
     "enabled": true,
     "world_path": "mirror_world",
-    "config_path": "mirror_config",
-    "port": 25566,
-    "bind_address": "127.0.0.1",
-    "max_players": 3,
     "sync": {
-      "dimensions": ["overworld", "the_nether", "the_end"],
-      "backup_before_sync": true,
-      "pause_autosave_during_sync": true
+      "dimensions": ["overworld", "the_nether", "the_end"]
     }
   },
   "performance": {
     "mirror_view_distance": 8,
-    "mirror_simulation_distance": 4,
-    "limit_chunk_loading_rate": true
+    "mirror_simulation_distance": 4
   }
 }
-```
-
-### config/mirror_config/mirror_server.properties（可选）
-
-镜像实例的独立 `server.properties`。如不存在则使用默认值。
-
-```properties
-gamemode=creative
-difficulty=peaceful
-allow-flight=true
-max-players=3
-online-mode=false
 ```
 
 ## 玩家使用流程
 
 ```
-管理员                        玩家
-  │                            │
-  │ /mirror sync confirm       │
-  │ (主服世界 → 镜像)            │
-  │                            │
-  │                            │ /mirror goto
-  │                            │ (客户端自动重连到镜像)
-  │                            │
-  │                            │ 在镜像世界游玩...
-  │                            │
-  │                            │ /mirror return
-  │                            │ (客户端自动重连回主服)
-  │                            │ 实验数据不保留
+管理员                          玩家
+  │                              │
+  │ /mirror sync confirm         │
+  │ (世界数据 → mirror_world/)   │
+  │                              │
+  │                              │ /mirror goto
+  │                              │ (进程内传送到镜像世界)
+  │                              │
+  │                              │ 在镜像世界游玩
+  │                              │ 三个维度互通（独立传送门）
+  │                              │
+  │                              │ /mirror return
+  │                              │ (传回主服原位置)
 ```
 
 ## 模块结构
 
 ```
 common/src/main/java/cn/hycer/mirror/
-├── Mirror.java                       # ModInitializer 入口
-├── command/MirrorCommands.java       # /mirror 指令树
-├── config/MirrorConfig.java          # Jackson 嵌套 JSON 配置
+├── Mirror.java                         # ModInitializer
+├── command/MirrorCommands.java         # /mirror 指令
+├── config/MirrorConfig.java            # JSON 配置
 ├── core/
-│   ├── MirrorServer.java             # 轻量级镜像服务端
-│   ├── MirrorInstanceManager.java    # 生命周期管理
-│   ├── AutoValidator.java            # Phase 1 自动验证器
-│   └── ValidationCommands.java       # /mirror test 诊断命令
-├── network/MirrorNetworkHandler.java # 网络监听 + Transfer 包
-└── sync/WorldSyncManager.java        # 世界文件复制（全量/增量）
+│   ├── MirrorServer.java               # 镜像服务端（世界加载+独立tick）
+│   └── MirrorInstanceManager.java      # 生命周期管理
+├── network/
+│   └── PlayerTransferManager.java      # 进程内玩家传送
+├── sync/
+│   └── WorldSyncManager.java           # 世界文件同步
+└── mixin/
+    ├── MirrorPortalRedirectMixin.java   # 传送门维度重定向
+    └── MirrorLevelTickMixin.java        # 防止主服 tick 镜像世界
 ```
 
 ## 技术要点
 
-### 轻量级 MirrorServer
+### 镜像世界实现
 
-MC 26.2 的 `DedicatedServer` 构造器需要 `WorldStem` 对象，该对象无公开工厂方法。采用轻量级方案：
+MC 26.2 不支持构造第二个 `DedicatedServer`。采用轻量级方案：
 
 - 共享主服 `BuiltInRegistries`、`DataFixer`、`Services`
-- 通过 `LevelStorageSource.createDefault(Path).createAccess(levelName)` 创建独立世界存储
-- 通过 `registryAccess().lookupOrThrow(LEVEL_STEM)` 获取维度 LevelStem
-- 反射构造 3 个 `ServerLevel`（overworld/nether/end）
-- 独立 Tick 循环线程（20 TPS）
-- 独立网络监听（`ServerConnectionListener`）
+- 通过 `LevelStorageSource.createAccess("mirror_world")` 创建独立世界存储
+- 通过 `registryAccess().lookupOrThrow(LEVEL_STEM)` 获取维度模板
+- 反射构造 3 个 `ServerLevel`（`mirror:overworld` / `mirror:the_nether` / `mirror:the_end`）
+- 注册到主服 `levels` Map（`teleportTo` 可找到），由独立线程 tick
+
+### 玩家传送
+
+- `/mirror goto`：调用 `player.teleportTo(mirrorWorld)` 进程内切换维度
+- 玩家连接不断开，背包/经验跟随
+- 返回时恢复原坐标
+
+### 传送门隔离
+
+- `MirrorPortalRedirectMixin` 拦截 `Entity.teleportTo`
+- 玩家在 `mirror:xxx` 维度时，自动将目标 `minecraft:xxx` 替换为 `mirror:xxx`
+- 镜像内部三个维度传送门完全独立，不与主服串
+
+### 独立 Tick
+
+- `MirrorLevelTickMixin` 阻止主服 tick 循环处理镜像世界
+- 镜像世界由 `MirrorServer` 的 `Mirror-Tick-Thread` 独立驱动（20 TPS）
 
 ### 世界同步
 
-- 使用 `FileChannel.transferTo()` 高效复制 region 文件
-- 支持完整同步和增量同步（按文件修改时间）
-- 同步完成后触发 `MirrorServer.reloadWorlds()` 热重载
-
-### 玩家转移
-
-- MC 1.20.5+ Cookie-based Transfer 机制
-- `ClientboundTransferPacket(host, port)` 重定向客户端
+- `FileChannel.transferTo()` 高效复制 region 文件
+- MC 26.x 路径：`dimensions/minecraft/<维度>/region/`
+- 同步前自动执行 `saveEverything()` 强制刷盘
+- 同步后 `MirrorServer.reloadWorlds()` 热重载
 
 ## 构建环境
 
@@ -176,10 +173,17 @@ MC 26.2 的 `DedicatedServer` 构造器需要 `WorldStem` 对象，该对象无�
 | JDK | 25 |
 | Mappings | 无（intermediary 自动生成） |
 
+## 发布
+
+推送 `V*` 格式的 tag 自动触发 GitHub Actions 构建 + git-cliff 生成更新日志 + Release。
+
+```bash
+git tag V0.1.0-Alpha
+git push origin V0.1.0-Alpha
+```
+
 ## JVM 参数建议
 
 ```
 -XX:+UseZGC -Xms8G -Xmx16G
 ```
-
-ZGC 下 GC 暂停 < 1ms，主服基本无感知镜像实例的 GC 活动。
