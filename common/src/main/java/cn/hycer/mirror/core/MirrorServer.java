@@ -1,8 +1,9 @@
 package cn.hycer.mirror.core;
 
 import cn.hycer.mirror.config.MirrorConfig;
-import cn.hycer.mirror.network.MirrorNetworkHandler;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -20,12 +21,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * 轻量级镜像服务端实例。
- */
 public class MirrorServer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("mirror");
+
+    private static final ResourceKey<Level> MIRROR_OVERWORLD =
+            ResourceKey.create(Registries.DIMENSION, Identifier.tryParse("mirror:overworld"));
+    private static final ResourceKey<Level> MIRROR_NETHER =
+            ResourceKey.create(Registries.DIMENSION, Identifier.tryParse("mirror:the_nether"));
+    private static final ResourceKey<Level> MIRROR_END =
+            ResourceKey.create(Registries.DIMENSION, Identifier.tryParse("mirror:the_end"));
 
     private final MinecraftServer mainServer;
     private final MirrorConfig config;
@@ -36,8 +41,7 @@ public class MirrorServer {
     private ServerLevel mirrorOverworld;
     private ServerLevel mirrorNether;
     private ServerLevel mirrorEnd;
-    private Object mirrorStorage; // LevelStorageAccess, for lock management
-    private MirrorNetworkHandler networkHandler;
+    private Object mirrorStorage;
     private final Map<UUID, ServerPlayer> players = new ConcurrentHashMap<>();
     private long lastTickTime;
     private double currentTPS;
@@ -49,16 +53,13 @@ public class MirrorServer {
         this.config = config;
     }
 
+    // ==================== Lifecycle ====================
+
     public boolean start() {
         if (!state.compareAndSet(State.STOPPED, State.STARTING)) return false;
         try {
             LOGGER.info("[MirrorServer] Loading mirror worlds...");
             loadMirrorWorlds();
-
-            // Start network listener
-            networkHandler = new MirrorNetworkHandler(
-                    this, config.getPort(), config.getBindAddress());
-            networkHandler.start();
 
             running.set(true);
             tickThread = new Thread(this::tickLoop, "Mirror-Tick-Thread");
@@ -75,6 +76,37 @@ public class MirrorServer {
         }
     }
 
+    public boolean stop() {
+        running.set(false);
+        try {
+            if (mirrorOverworld != null) mirrorOverworld.save(null, false, false);
+            if (mirrorNether != null) mirrorNether.save(null, false, false);
+            if (mirrorEnd != null) mirrorEnd.save(null, false, false);
+        } catch (Exception ignored) {}
+        closeStorage();
+        state.set(State.STOPPED);
+        return true;
+    }
+
+    public void reloadWorlds() {
+        LOGGER.info("[MirrorServer] Hot-reloading mirror worlds...");
+        try {
+            if (mirrorOverworld != null) mirrorOverworld.save(null, false, false);
+            if (mirrorNether != null) mirrorNether.save(null, false, false);
+            if (mirrorEnd != null) mirrorEnd.save(null, false, false);
+            closeStorage();
+            mirrorOverworld = null;
+            mirrorNether = null;
+            mirrorEnd = null;
+            loadMirrorWorlds();
+            LOGGER.info("[MirrorServer] Mirror worlds reloaded successfully");
+        } catch (Exception e) {
+            LOGGER.error("[MirrorServer] Failed to reload worlds", e);
+        }
+    }
+
+    // ==================== World Loading ====================
+
     @SuppressWarnings("unchecked")
     private void loadMirrorWorlds() throws Exception {
         Field levelsField = findField(mainServer.getClass(), "levels");
@@ -82,188 +114,132 @@ public class MirrorServer {
         Map<ResourceKey<Level>, ServerLevel> mainLevels =
                 (Map<ResourceKey<Level>, ServerLevel>) levelsField.get(mainServer);
 
-        LevelStem overworldStem = getLevelStem(mainLevels, Level.OVERWORLD);
-        LevelStem netherStem = getLevelStem(mainLevels, Level.NETHER);
-        LevelStem endStem = getLevelStem(mainLevels, Level.END);
-
-        LOGGER.debug("[MirrorServer] LevelStem overworld={}, nether={}, end={}",
-                overworldStem != null, netherStem != null, endStem != null);
+        LevelStem owStem = getLevelStemFromRegistry(Level.OVERWORLD);
+        LevelStem neStem = getLevelStemFromRegistry(Level.NETHER);
+        LevelStem enStem = getLevelStemFromRegistry(Level.END);
 
         Object storage = createMirrorStorage();
         this.mirrorStorage = storage;
 
-        mirrorOverworld = createServerLevel(storage, Level.OVERWORLD, overworldStem);
+        mirrorOverworld = createServerLevel(storage, MIRROR_OVERWORLD, owStem);
         LOGGER.info("[MirrorServer] Mirror overworld created");
 
-        if (netherStem != null) {
-            mirrorNether = createServerLevel(storage, Level.NETHER, netherStem);
+        if (neStem != null) {
+            mirrorNether = createServerLevel(storage, MIRROR_NETHER, neStem);
             LOGGER.info("[MirrorServer] Mirror nether created");
         }
-        if (endStem != null) {
-            mirrorEnd = createServerLevel(storage, Level.END, endStem);
+        if (enStem != null) {
+            mirrorEnd = createServerLevel(storage, MIRROR_END, enStem);
             LOGGER.info("[MirrorServer] Mirror end created");
         }
+
+        // Register in main server's levels map (server thread)
+        // Safe because MirrorLevelTickMixin prevents main tick loop from ticking mirror levels
+        mainServer.execute(() -> {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<ResourceKey<Level>, ServerLevel> all =
+                        (Map<ResourceKey<Level>, ServerLevel>) levelsField.get(mainServer);
+                all.put(MIRROR_OVERWORLD, mirrorOverworld);
+                if (mirrorNether != null) all.put(MIRROR_NETHER, mirrorNether);
+                if (mirrorEnd != null) all.put(MIRROR_END, mirrorEnd);
+                LOGGER.info("[MirrorServer] Mirror levels registered in server.levels");
+            } catch (Exception e) {
+                LOGGER.error("[MirrorServer] Failed to register levels", e);
+            }
+        });
     }
 
-    private LevelStem getLevelStem(Map<ResourceKey<Level>, ServerLevel> levels,
-                                    ResourceKey<Level> dimension) {
-        // Try registry lookup first (most reliable)
+    private LevelStem getLevelStemFromRegistry(ResourceKey<Level> dimension) {
         try {
             Object regAccess = mainServer.registryAccess();
-            LOGGER.debug("[MirrorServer] registryAccess() type: {}", regAccess.getClass().getName());
-
-            // Try ALL public methods that take a ResourceKey and return something
             for (Method m : regAccess.getClass().getMethods()) {
                 if (m.getParameterCount() == 1
                         && m.getParameterTypes()[0] == ResourceKey.class
                         && m.getReturnType() != void.class) {
-                    try {
-                        Object result = m.invoke(regAccess,
-                                net.minecraft.core.registries.Registries.LEVEL_STEM);
-                        if (result != null) {
-                            LOGGER.debug("[MirrorServer]   {}(LEVEL_STEM) -> {}",
-                                    m.getName(), result.getClass().getSimpleName());
-
-                            // If result is a Registry, call get(dimensionKey)
-                            if (result instanceof java.util.Optional) {
-                                Optional<?> opt = (Optional<?>) result;
-                                if (opt.isPresent() && opt.get() instanceof LevelStem) {
-                                    return (LevelStem) opt.get();
-                                }
-                            } else {
-                                // Try getOptional or get method
-                                for (Method getM : result.getClass().getMethods()) {
-                                    if (getM.getParameterCount() == 1
-                                            && getM.getParameterTypes()[0] == ResourceKey.class
-                                            && getM.getReturnType() != void.class) {
-                                        Object val = getM.invoke(result, dimension);
-                                        if (val instanceof LevelStem) return (LevelStem) val;
-                                        if (val instanceof Optional && ((Optional<?>)val).isPresent()
-                                                && ((Optional<?>)val).get() instanceof LevelStem) {
-                                            return (LevelStem) ((Optional<?>)val).get();
-                                        }
-                                    }
-                                }
+                    Object result = m.invoke(regAccess, Registries.LEVEL_STEM);
+                    if (result instanceof Optional<?> opt && opt.isPresent()
+                            && opt.get() instanceof LevelStem stem) return stem;
+                    if (result != null && !(result instanceof Optional)) {
+                        for (Method getM : result.getClass().getMethods()) {
+                            if (getM.getParameterCount() == 1
+                                    && getM.getParameterTypes()[0] == ResourceKey.class) {
+                                Object val = getM.invoke(result, dimension);
+                                if (val instanceof LevelStem s) return s;
+                                if (val instanceof Optional<?> o && o.isPresent()
+                                        && o.get() instanceof LevelStem s) return s;
                             }
                         }
-                    } catch (Exception e) {
-                        LOGGER.debug("[MirrorServer]   {}(LEVEL_STEM) threw: {}", m.getName(), e.getMessage());
                     }
                 }
             }
         } catch (Exception e) {
-            LOGGER.warn("[MirrorServer] Registry access failed: {}", e.getMessage());
+            LOGGER.warn("[MirrorServer] Registry LevelStem lookup failed: {}", e.getMessage());
         }
-
-        // Fallback: scan ServerLevel fields
-        ServerLevel level = levels.get(dimension);
-        if (level != null) {
-            Class<?> clazz = level.getClass();
-            while (clazz != null) {
-                for (Field f : clazz.getDeclaredFields()) {
-                    if (LevelStem.class.isAssignableFrom(f.getType())) {
-                        f.setAccessible(true);
-                        try { return (LevelStem) f.get(level); } catch (Exception ignored) {}
-                    }
-                }
-                clazz = clazz.getSuperclass();
-            }
-        }
-
         return null;
     }
+
+    // ==================== Storage ====================
 
     private Object createMirrorStorage() throws Exception {
         Class<?> lssClass = Class.forName("net.minecraft.world.level.storage.LevelStorageSource");
-
-        // Find createDefault(Path)
         Method createDefault = null;
         for (Method m : lssClass.getDeclaredMethods()) {
             if (m.getName().equals("createDefault") && m.getParameterCount() == 1) {
-                LOGGER.debug("[MirrorServer] createDefault: {} params, type={}",
-                        m.getParameterCount(), m.getParameterTypes()[0].getSimpleName());
-                createDefault = m;
-                break;
+                createDefault = m; break;
             }
         }
-        if (createDefault == null) {
-            LOGGER.error("[MirrorServer] No createDefault found on LevelStorageSource");
-            return null;
-        }
-
-        Path basePath = Path.of(".").toAbsolutePath();
-        LOGGER.info("[MirrorServer] Calling createDefault({})", basePath);
-        Object source = createDefault.invoke(null, basePath);
-        LOGGER.info("[MirrorServer] Source created: {}", source.getClass().getName());
-
-        // Find createAccess method
+        Object source = createDefault.invoke(null, Path.of(".").toAbsolutePath());
         Method createAccess = null;
         for (Method m : lssClass.getDeclaredMethods()) {
             if (m.getName().equals("createAccess") && m.getParameterCount() == 1) {
-                LOGGER.info("[MirrorServer] Found createAccess({})",
-                        m.getParameterTypes()[0].getSimpleName());
-                createAccess = m;
-                break;
+                createAccess = m; break;
             }
         }
-        if (createAccess == null) {
-            LOGGER.error("[MirrorServer] No createAccess found");
-            return null;
-        }
-
-        String worldPath = config.getWorldPath();
-        LOGGER.info("[MirrorServer] Calling createAccess(\"{}\")", worldPath);
-        Object storage = createAccess.invoke(source, worldPath);
-        LOGGER.info("[MirrorServer] Storage created: {}", storage);
-        return storage;
+        return createAccess.invoke(source, config.getWorldPath());
     }
 
-    private ServerLevel createServerLevel(Object storage, ResourceKey<Level> dimension,
-                                           LevelStem stem) throws Exception {
-        ServerLevel mainOverworld = mainServer.overworld();
-        Constructor<?> slCtor = findServerLevelConstructor();
-        Class<?>[] paramTypes = slCtor.getParameterTypes();
-        Object[] args = new Object[paramTypes.length];
-
-        for (int i = 0; i < paramTypes.length; i++) {
-            Class<?> pType = paramTypes[i];
-            Object val = null;
-
-            if (LevelStem.class.isAssignableFrom(pType)) {
-                val = stem;
-            } else if (pType.isAssignableFrom(mainServer.getClass())) {
-                val = mainServer;
-            } else if (pType.isAssignableFrom(mainOverworld.getClass())) {
-                val = findFieldByType(mainOverworld, pType);
-            } else {
-                val = findFieldByType(mainOverworld, pType);
-                if (val == null) val = findFieldByType(mainServer, pType);
-            }
-
-            // Try matching storage
-            if (val == null && storage != null) {
-                for (Class<?> iface : storage.getClass().getInterfaces()) {
-                    if (pType.isAssignableFrom(iface)) { val = storage; break; }
+    private void closeStorage() {
+        if (mirrorStorage != null) {
+            try {
+                for (Method m : mirrorStorage.getClass().getMethods()) {
+                    if (m.getName().equals("close") && m.getParameterCount() == 0) {
+                        m.invoke(mirrorStorage); break;
+                    }
                 }
-            }
-            args[i] = val;
-            LOGGER.debug("[MirrorServer]   SL[{}] {} = {}",
-                    i, pType.getSimpleName(),
-                    val != null ? val.getClass().getSimpleName() : "NULL");
+            } catch (Exception ignored) {}
+            mirrorStorage = null;
         }
-
-        slCtor.setAccessible(true);
-        return (ServerLevel) slCtor.newInstance(args);
     }
 
-    private Constructor<?> findServerLevelConstructor() {
+    // ==================== ServerLevel Construction ====================
+
+    private ServerLevel createServerLevel(Object storage, ResourceKey<Level> dimKey,
+                                           LevelStem stem) throws Exception {
+        ServerLevel template = mainServer.overworld();
+        Constructor<?> ctor = null;
         for (Constructor<?> c : ServerLevel.class.getDeclaredConstructors()) {
-            return c;
+            ctor = c; break;
         }
-        return null;
+        ctor.setAccessible(true);
+        Class<?>[] types = ctor.getParameterTypes();
+        Object[] args = new Object[types.length];
+
+        for (int i = 0; i < types.length; i++) {
+            Class<?> t = types[i];
+            if (LevelStem.class.isAssignableFrom(t)) args[i] = stem;
+            else if (ResourceKey.class.isAssignableFrom(t)) args[i] = dimKey;
+            else if (t.isAssignableFrom(mainServer.getClass())) args[i] = mainServer;
+            else {
+                args[i] = findFieldByType(template, t);
+                if (args[i] == null) args[i] = findFieldByType(mainServer, t);
+                if (args[i] == null) args[i] = findFieldByType(storage, t);
+            }
+        }
+        return (ServerLevel) ctor.newInstance(args);
     }
 
-    // --- Tick loop (unchanged) ---
+    // ==================== Tick ====================
 
     private void tickLoop() {
         final long MSPT = 50;
@@ -274,7 +250,10 @@ public class MirrorServer {
             long elapsed = (System.nanoTime() - start) / 1_000_000;
             long now = System.currentTimeMillis();
             long delta = now - lastTickTime;
-            if (delta >= 1000) { currentTPS = 1000.0 / Math.max(delta, MSPT) * (delta / MSPT); lastTickTime = now; }
+            if (delta >= 1000) {
+                currentTPS = 1000.0 / Math.max(delta, MSPT) * (delta / MSPT);
+                lastTickTime = now;
+            }
             if (MSPT - elapsed > 1) {
                 try { Thread.sleep(MSPT - elapsed); }
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
@@ -288,7 +267,7 @@ public class MirrorServer {
         if (mirrorEnd != null) try { mirrorEnd.tick(() -> true); } catch (Exception ignored) {}
     }
 
-    // --- Utility ---
+    // ==================== Utility ====================
 
     private static Field findField(Class<?> clazz, String name) {
         Class<?> c = clazz;
@@ -300,6 +279,7 @@ public class MirrorServer {
     }
 
     private static Object findFieldByType(Object obj, Class<?> targetType) {
+        if (obj == null) return null;
         Class<?> clazz = obj.getClass();
         while (clazz != null && clazz != Object.class) {
             for (Field f : clazz.getDeclaredFields()) {
@@ -314,69 +294,14 @@ public class MirrorServer {
         return null;
     }
 
-    public boolean stop() {
-        running.set(false);
-        if (networkHandler != null) networkHandler.stop();
-        // Save and unload mirror worlds
-        try {
-            if (mirrorOverworld != null) mirrorOverworld.save(null, false, false);
-            if (mirrorNether != null) mirrorNether.save(null, false, false);
-            if (mirrorEnd != null) mirrorEnd.save(null, false, false);
-        } catch (Exception ignored) {}
-        // Close storage to release file lock
-        if (mirrorStorage != null) {
-            try {
-                for (java.lang.reflect.Method m : mirrorStorage.getClass().getMethods()) {
-                    if (m.getName().equals("close") && m.getParameterCount() == 0) {
-                        m.invoke(mirrorStorage); break;
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-        state.set(State.STOPPED);
-        return true;
-    }
-
-    /**
-     * 热重载镜像世界：保存→卸载→重新加载。
-     * 在文件同步后调用。
-     */
-    public void reloadWorlds() {
-        LOGGER.info("[MirrorServer] Hot-reloading mirror worlds...");
-        try {
-            // Save current worlds
-            if (mirrorOverworld != null) mirrorOverworld.save(null, false, false);
-            if (mirrorNether != null) mirrorNether.save(null, false, false);
-            if (mirrorEnd != null) mirrorEnd.save(null, false, false);
-
-            // Close old LevelStorageAccess to release file lock
-            if (mirrorStorage != null) {
-                try {
-                    for (java.lang.reflect.Method m : mirrorStorage.getClass().getMethods()) {
-                        if (m.getName().equals("close") && m.getParameterCount() == 0) {
-                            m.invoke(mirrorStorage);
-                            break;
-                        }
-                    }
-                } catch (Exception ignored) {}
-                mirrorStorage = null;
-            }
-
-            // Clear references
-            mirrorOverworld = null;
-            mirrorNether = null;
-            mirrorEnd = null;
-
-            // Reload
-            loadMirrorWorlds();
-            LOGGER.info("[MirrorServer] Mirror worlds reloaded successfully");
-        } catch (Exception e) {
-            LOGGER.error("[MirrorServer] Failed to reload worlds", e);
-        }
-    }
+    // ==================== Getters ====================
 
     public State getState() { return state.get(); }
     public ServerLevel getOverworld() { return mirrorOverworld; }
+    public ServerLevel getNether() { return mirrorNether; }
+    public ServerLevel getEnd() { return mirrorEnd; }
     public double getTPS() { return currentTPS; }
     public int getOnlinePlayerCount() { return players.size(); }
+    public void addPlayer(ServerPlayer player) { players.put(player.getUUID(), player); }
+    public void removePlayer(UUID uuid) { players.remove(uuid); }
 }

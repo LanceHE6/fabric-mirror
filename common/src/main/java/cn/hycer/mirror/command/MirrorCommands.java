@@ -2,7 +2,7 @@ package cn.hycer.mirror.command;
 
 import cn.hycer.mirror.core.MirrorInstanceManager;
 import cn.hycer.mirror.core.ValidationCommands;
-import cn.hycer.mirror.network.MirrorNetworkHandler;
+import cn.hycer.mirror.network.PlayerTransferManager;
 import cn.hycer.mirror.sync.WorldSyncManager;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -103,6 +103,11 @@ public class MirrorCommands {
         var server = src.getServer();
         Path mainWorld = server.getServerDirectory().resolve("world");
         Path mirrorWorld = Path.of("mirror_world");
+
+        // Force save-all before copying
+        src.sendSystemMessage(Component.literal("§6正在保存世界..."));
+        server.saveEverything(false, true, true);
+
         var config = cn.hycer.mirror.config.MirrorConfig.getInstance();
         var syncMgr = new WorldSyncManager(mainWorld, mirrorWorld, config);
 
@@ -138,6 +143,9 @@ public class MirrorCommands {
         }
         var server = src.getServer();
         Path mainWorld = server.getServerDirectory().resolve("world");
+
+        server.saveEverything(false, true, true);
+
         var config = cn.hycer.mirror.config.MirrorConfig.getInstance();
         var syncMgr = new WorldSyncManager(mainWorld, Path.of("mirror_world"), config);
 
@@ -166,11 +174,8 @@ public class MirrorCommands {
             src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
-        boolean ok = MirrorNetworkHandler.transferToMirror(player);
-        if (!ok) {
-            src.sendSystemMessage(Component.literal("§c传输失败，请查看日志。"));
-        }
-        return ok ? 1 : 0;
+        PlayerTransferManager.transferToMirror(player);
+        return 1;
     }
 
     private static int transferToMain(CommandContext<CommandSourceStack> ctx) {
@@ -179,10 +184,7 @@ public class MirrorCommands {
             src.sendSystemMessage(Component.literal("§c此命令只能由玩家执行。"));
             return 0;
         }
-        boolean ok = MirrorNetworkHandler.transferToMain(player);
-        if (!ok) {
-            src.sendSystemMessage(Component.literal("§c返回失败，请查看日志。"));
-        }
-        return ok ? 1 : 0;
+        PlayerTransferManager.transferToMain(player);
+        return 1;
     }
 }

@@ -47,21 +47,8 @@ public class WorldSyncManager {
                 long totalBytes = 0;
 
                 for (String dim : dimensions) {
-                    Path srcDim, dstDim;
-                    if ("overworld".equals(dim)) {
-                        srcDim = mainWorldPath;
-                        dstDim = mirrorWorldPath;
-                    } else if ("the_nether".equals(dim)) {
-                        srcDim = mainWorldPath.resolve("DIM-1");
-                        dstDim = mirrorWorldPath.resolve("DIM-1");
-                    } else if ("the_end".equals(dim)) {
-                        srcDim = mainWorldPath.resolve("DIM1");
-                        dstDim = mirrorWorldPath.resolve("DIM1");
-                    } else {
-                        LOGGER.warn("[WorldSync] Unknown dimension: {}", dim);
-                        continue;
-                    }
-
+                    Path srcDim = mainWorldPath.resolve("dimensions/minecraft/" + dim);
+                    Path dstDim = mirrorWorldPath.resolve("dimensions/minecraft/" + dim);
                     long bytes = copyRegionFiles(srcDim, dstDim);
                     totalBytes += bytes;
                     LOGGER.info("[WorldSync] {} copied {} bytes", dim, bytes);
@@ -96,20 +83,8 @@ public class WorldSyncManager {
                 long totalBytes = 0;
 
                 for (String dim : config.getSyncDimensions()) {
-                    Path srcDim, dstDim;
-                    if ("overworld".equals(dim)) {
-                        srcDim = mainWorldPath;
-                        dstDim = mirrorWorldPath;
-                    } else if ("the_nether".equals(dim)) {
-                        srcDim = mainWorldPath.resolve("DIM-1");
-                        dstDim = mirrorWorldPath.resolve("DIM-1");
-                    } else if ("the_end".equals(dim)) {
-                        srcDim = mainWorldPath.resolve("DIM1");
-                        dstDim = mirrorWorldPath.resolve("DIM1");
-                    } else {
-                        continue;
-                    }
-
+                    Path srcDim = mainWorldPath.resolve("dimensions/minecraft/" + dim);
+                    Path dstDim = mirrorWorldPath.resolve("dimensions/minecraft/" + dim);
                     long bytes = copyRegionFilesIncremental(srcDim, dstDim);
                     totalBytes += bytes;
                     LOGGER.info("[WorldSync] {} copied {} bytes (incremental)", dim, bytes);
@@ -236,9 +211,9 @@ public class WorldSyncManager {
     public long estimateSyncSize() {
         long total = 0;
         try {
-            total += estimateDirSize(mainWorldPath.resolve("region"));
-            total += estimateDirSize(mainWorldPath.resolve("DIM-1").resolve("region"));
-            total += estimateDirSize(mainWorldPath.resolve("DIM1").resolve("region"));
+            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/overworld/region"));
+            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/the_nether/region"));
+            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/the_end/region"));
         } catch (Exception e) {
             LOGGER.warn("[WorldSync] Error estimating size", e);
         }
