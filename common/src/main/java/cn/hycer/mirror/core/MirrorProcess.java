@@ -34,6 +34,9 @@ public class MirrorProcess {
     /** 日志回调（用于捕获 "Done" 等启动完成信号） */
     private volatile Consumer<String> logListener;
 
+    /** 停止完成回调（镜像服进程退出后触发） */
+    private volatile Runnable stopCallback;
+
     public MirrorProcess(Path mirrorDir, MirrorConfig config) {
         this.mirrorDir = mirrorDir;
         this.config = config;
@@ -42,6 +45,7 @@ public class MirrorProcess {
     public State getState() { return state.get(); }
     public boolean isRunning() { return running.get(); }
     public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
+    public void setStopCallback(Runnable cb) { this.stopCallback = cb; }
 
     /**
      * 启动镜像服进程。
@@ -150,6 +154,12 @@ public class MirrorProcess {
                 stdin = null;
                 state.set(State.STOPPED);
                 LOGGER.info("[Process] Mirror process stopped");
+                // 触发停止完成回调
+                Runnable cb = stopCallback;
+                if (cb != null) {
+                    stopCallback = null;
+                    cb.run();
+                }
             }
         }, "Mirror-Stop-Thread");
         waiter.setDaemon(true);

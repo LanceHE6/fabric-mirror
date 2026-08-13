@@ -66,7 +66,15 @@ public class MirrorInstanceManager {
      * 停止镜像服。
      */
     public boolean stop() {
+        return stop(null);
+    }
+
+    /**
+     * 停止镜像服，进程退出后触发回调。
+     */
+    public boolean stop(Runnable onStopped) {
         if (process == null) return false;
+        process.setStopCallback(onStopped);
         process.stop();
         started = false;
         return true;
