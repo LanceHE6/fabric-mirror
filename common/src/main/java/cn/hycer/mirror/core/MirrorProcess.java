@@ -73,6 +73,10 @@ public class MirrorProcess {
             );
             pb.directory(mirrorDir.toFile());
             pb.redirectErrorStream(true); // stderr 合并到 stdout
+            // 显式隔离 stdin：镜像服 stdin 是独立 PIPE，不继承主服 System.in
+            // （主服控制台输入只进主服，镜像服命令只能通过 sendCommand 显式发送）
+            pb.redirectInput(ProcessBuilder.Redirect.PIPE);
+            pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
 
             LOGGER.info("[Process] Starting mirror server: {}", String.join(" ", pb.command()));
             process = pb.start();
