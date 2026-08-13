@@ -121,19 +121,58 @@ public class MirrorProcess {
     }
 
     /**
-     * 停止镜像服（优雅：先发 stop，超时后强杀）。
+     * 停止镜像服（异步：先发 stop，后台等待退出，超时强杀）。
+     * 不阻塞调用线程，避免卡住主服 tick 循环。
      */
     public void stop() {
         if (state.get() == State.STOPPED) return;
         state.set(State.STOPPING);
 
+        // 先发 stop 命令（此时 running 仍为 true，sendCommand 才能生效）
+        sendCommand("stop");
+
+        // 标记停止中，阻止后续命令
         running.set(false);
+
+        // 后台线程等待进程退出，超时强杀
+        Thread waiter = new Thread(() -> {
+            try {
+                boolean exited = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+                if (!exited) {
+                    LOGGER.warn("[Process] Graceful stop timed out, force killing");
+                    process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
+            } finally {
+                process = null;
+                stdin = null;
+                state.set(State.STOPPED);
+                LOGGER.info("[Process] Mirror process stopped");
+            }
+        }, "Mirror-Stop-Thread");
+        waiter.setDaemon(true);
+        waiter.start();
+    }
+
+    /**
+     * 同步停止镜像服（发 stop，当前线程等待退出，超时强杀）。
+     * 供 sync 等在后台线程执行的场景使用，确保进程真正退出后再操作文件。
+     */
+    public void stopAndWait() {
+        if (state.get() == State.STOPPED) return;
+        state.set(State.STOPPING);
+
+        sendCommand("stop");
+        running.set(false);
+
         try {
-            sendCommand("stop");
             boolean exited = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
             if (!exited) {
                 LOGGER.warn("[Process] Graceful stop timed out, force killing");
                 process.destroyForcibly();
+                process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -73,6 +73,16 @@ public class MirrorInstanceManager {
     }
 
     /**
+     * 同步停止镜像服（等待进程真正退出）。
+     * 供 sync 等在后台线程执行的场景使用。
+     */
+    public void stopAndWait() {
+        if (process == null) return;
+        process.stopAndWait();
+        started = false;
+    }
+
+    /**
      * 强制杀死镜像服进程。
      */
     public void forceKill() {

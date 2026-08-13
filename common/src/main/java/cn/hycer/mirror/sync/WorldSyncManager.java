@@ -38,10 +38,10 @@ public class WorldSyncManager {
 
         new Thread(() -> {
             try {
-                // 1. 若镜像服运行，先停止（保证世界文件已保存/解锁）
+                // 1. 若镜像服运行，先同步停止（确保进程退出、世界文件解锁）
                 if (mgr.isRunning()) {
                     src.sendSystemMessage(Component.literal("§7停止镜像服以同步地图..."));
-                    mgr.stop();
+                    mgr.stopAndWait();
                 }
 
                 // 2. 复制主服世界 → 镜像服
@@ -83,7 +83,7 @@ public class WorldSyncManager {
         new Thread(() -> {
             try {
                 if (mgr.isRunning()) {
-                    mgr.stop();
+                    mgr.stopAndWait();
                 }
                 // 重新克隆（覆盖 mods/config/server.properties）
                 boolean cloned = cloner.cloneServer();

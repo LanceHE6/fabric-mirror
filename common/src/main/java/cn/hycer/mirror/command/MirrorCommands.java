@@ -101,7 +101,7 @@ public class MirrorCommands {
 
         src.sendSystemMessage(Component.literal("§6正在停止镜像实例..."));
         mgr.stop();
-        src.sendSystemMessage(Component.literal("§a镜像实例已停止。"));
+        src.sendSystemMessage(Component.literal("§7已发送停止指令，镜像实例正在后台关闭..."));
         return 1;
     }
 
