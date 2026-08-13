@@ -96,10 +96,9 @@ public class MirrorCloner {
             lines = new ArrayList<>(Files.readAllLines(mainProps));
         }
 
-        // 覆盖关键项
+        // 覆盖关键项（online-mode 不覆盖，继承主服设置，保证验证模式一致）
         lines = replaceOrAdd(lines, "server-port", String.valueOf(config.getPort()));
         lines = replaceOrAdd(lines, "level-name", "world");
-        lines = replaceOrAdd(lines, "online-mode", "true");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
         lines = replaceOrAdd(lines, "max-players", String.valueOf(config.getMaxPlayers()));
 

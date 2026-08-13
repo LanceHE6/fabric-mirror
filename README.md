@@ -110,7 +110,7 @@ export JAVA_HOME=/opt/jdk-25
 - `/mirror goto`：主服发 Transfer 包 → 客户端自动重连镜像服公网地址
 - `/mirror return`：镜像服发 Transfer 包 → 客户端自动重连主服公网地址
 
-**正版验证**：镜像服 `online-mode=true`（克隆时继承），玩家重连时重新走 Mojang 验证，UUID 一致。keypair 为会话级临时密钥，每次启动随机生成，无需共享。
+**验证模式**：镜像服 `online-mode` 继承主服设置（不强制覆盖），保证两者验证模式一致。正版验证下玩家重连时重新走 Mojang 验证，UUID 一致；离线模式下玩家直接进入。keypair 为会话级临时密钥，每次启动随机生成，无需共享。
 
 ## 世界同步
 
