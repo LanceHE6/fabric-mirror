@@ -158,7 +158,11 @@ public class MirrorProcess {
         try {
             String line;
             while ((line = reader.readLine()) != null) {
-                LOGGER.info("[MirrorSrv] {}", line);
+                // 只转发关键事件，避免镜像服日志刷屏污染主服控制台。
+                // 镜像服完整日志由自身写入 mirror/logs/latest.log。
+                if (isKeyEvent(line)) {
+                    LOGGER.info("[MirrorSrv] {}", line);
+                }
                 Consumer<String> listener = logListener;
                 if (listener != null) listener.accept(line);
             }
@@ -170,6 +174,21 @@ public class MirrorProcess {
                 LOGGER.warn("[Process] Mirror process output stream closed");
             }
         }
+    }
+
+    /**
+     * 判断镜像服日志行是否为需要转发到主服的关键事件。
+     * 关键事件：启动完成、严重错误、异常、停止。
+     */
+    private static boolean isKeyEvent(String line) {
+        if (line == null) return false;
+        String l = line;
+        return l.contains("Done (")           // 启动完成
+                || l.contains("ERROR")        // 错误
+                || l.contains("Exception")    // 异常
+                || l.contains("Caused by")    // 异常堆栈
+                || l.contains("Stopping")     // 停止
+                || l.contains("crash");       // 崩溃
     }
 
     private Path findServerJar() {
