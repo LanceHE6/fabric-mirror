@@ -71,23 +71,18 @@ export JAVA_HOME=/opt/jdk-25
     "public_address": "127.0.0.1",
     "main_public_address": "127.0.0.1",
     "main_port": 25565,
-    "max_players": 3,
-    "auto_clone": true,
-    "sync": {
-      "dimensions": ["overworld", "the_nether", "the_end"]
-    }
-  },
-  "performance": {
-    "mirror_view_distance": 8,
-    "mirror_simulation_distance": 4
+    "auto_clone": true
   }
 }
 ```
 
 关键配置项：
 - `dir`: 镜像服根目录（相对主服运行目录）
+- `port`: 镜像服监听端口
 - `public_address`: 镜像服公网地址（**内网穿透场景填穿透域名**，Transfer goto 目标）
 - `main_public_address`/`main_port`: 主服公网地址（Transfer return 目标）
+
+其余 server.properties 项（online-mode、max-players、view-distance、gamemode 等）均**继承主服配置**，无需在此重复配置。
 
 ## 两种运行模式
 

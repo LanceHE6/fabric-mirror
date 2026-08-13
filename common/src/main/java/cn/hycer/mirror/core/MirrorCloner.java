@@ -102,11 +102,11 @@ public class MirrorCloner {
             lines = new ArrayList<>(Files.readAllLines(mainProps));
         }
 
-        // 覆盖关键项（online-mode 不覆盖，继承主服设置，保证验证模式一致）
+        // 仅覆盖必要项（端口、世界名、监听地址）。
+        // 其余项（online-mode、max-players、view-distance、gamemode 等）均继承主服配置。
         lines = replaceOrAdd(lines, "server-port", String.valueOf(config.getPort()));
         lines = replaceOrAdd(lines, "level-name", "world");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
-        lines = replaceOrAdd(lines, "max-players", String.valueOf(config.getMaxPlayers()));
 
         Files.write(mirrorProps, lines);
         LOGGER.info("[Cloner] Generated mirror server.properties (port={})", config.getPort());
