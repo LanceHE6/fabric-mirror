@@ -98,6 +98,10 @@ public class MirrorConfig {
     @JsonIgnore
     public int getMainPort() { return mirror.mainPort; }
 
+    /** 镜像服 transfer 地址（goto 时 Transfer 目标，A 记录指向主服公网入口，用于主服识别 goto） */
+    @JsonIgnore
+    public String getMirrorTransferHost() { return mirror.mirrorTransferHost; }
+
     @JsonIgnore
     public boolean isAutoClone() { return mirror.autoClone; }
 
@@ -134,6 +138,10 @@ public class MirrorConfig {
         /** 主服公网端口 */
         @JsonProperty("main_port")
         private int mainPort = 25565;
+
+        /** 镜像服 transfer 地址（goto 时 Transfer 目标，A 记录指向主服公网入口） */
+        @JsonProperty("mirror_transfer_host")
+        private String mirrorTransferHost = "";
 
         /** 首次 /mirror start 时自动克隆主服 */
         @JsonProperty("auto_clone")

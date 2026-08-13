@@ -13,6 +13,9 @@
       "cn.hycer.mirror.Mirror"
     ]
   },
+  "mixins": [
+    "mirror.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.19.3",
     "fabric-api": "*",
