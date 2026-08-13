@@ -3,7 +3,7 @@
   "id": "mirror",
   "version": "${version}",
   "name": "Mirror",
-  "description": "Fabric 单服务端伪独立镜像实例 - 在主服进程中运行独立的从属 Minecraft 服务端实例",
+  "description": "Fabric 独立进程镜像服 - 主服通过模组克隆并控制一个独立的镜像服务端实例",
   "authors": ["LanceHE6"],
   "contact": {},
   "license": "All-Rights-Reserved",
@@ -13,9 +13,6 @@
       "cn.hycer.mirror.Mirror"
     ]
   },
-  "mixins": [
-    "mirror.mixins.json"
-  ],
   "depends": {
     "fabricloader": ">=0.19.3",
     "fabric-api": "*",

@@ -1,0 +1,187 @@
+package cn.hycer.mirror.core;
+
+import cn.hycer.mirror.config.MirrorConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+
+/**
+ * 镜像服进程控制器。
+ * 通过 ProcessBuilder 启动独立 JVM 进程，stdin 发命令，stdout 读日志。
+ */
+public class MirrorProcess {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("mirror");
+
+    public enum State { STOPPED, STARTING, RUNNING, STOPPING, ERROR }
+
+    private final Path mirrorDir;
+    private final MirrorConfig config;
+
+    private final AtomicReference<State> state = new AtomicReference<>(State.STOPPED);
+    private Process process;
+    private BufferedWriter stdin;
+    private Thread outputThread;
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    /** 日志回调（用于捕获 "Done" 等启动完成信号） */
+    private volatile Consumer<String> logListener;
+
+    public MirrorProcess(Path mirrorDir, MirrorConfig config) {
+        this.mirrorDir = mirrorDir;
+        this.config = config;
+    }
+
+    public State getState() { return state.get(); }
+    public boolean isRunning() { return running.get(); }
+    public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
+
+    /**
+     * 启动镜像服进程。
+     * 需要先确定 server jar 文件名。
+     */
+    public boolean start() {
+        if (!state.compareAndSet(State.STOPPED, State.STARTING)) {
+            LOGGER.warn("[Process] Cannot start, state={}", state.get());
+            return false;
+        }
+
+        try {
+            Path serverJar = findServerJar();
+            if (serverJar == null) {
+                LOGGER.error("[Process] No server jar in {}", mirrorDir);
+                state.set(State.ERROR);
+                return false;
+            }
+
+            // 用主服同一份 JVM（java.home），避免 PATH 里 java 版本不符
+            String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    javaBin,
+                    "-Dmirror.instance=true",       // 镜像模式自识别
+                    "-Xms2G", "-Xmx4G",              // 镜像服内存
+                    "-jar", serverJar.getFileName().toString(),
+                    "nogui"
+            );
+            pb.directory(mirrorDir.toFile());
+            pb.redirectErrorStream(true); // stderr 合并到 stdout
+
+            LOGGER.info("[Process] Starting mirror server: {}", String.join(" ", pb.command()));
+            process = pb.start();
+
+            // 独立线程读 stdout
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            outputThread = new Thread(() -> readOutput(reader), "Mirror-Process-Output");
+            outputThread.setDaemon(true);
+            outputThread.start();
+
+            // stdin 写入器
+            stdin = new BufferedWriter(
+                    new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+
+            running.set(true);
+            state.set(State.RUNNING);
+            LOGGER.info("[Process] Mirror process started (pid={})", process.pid());
+            return true;
+        } catch (IOException e) {
+            LOGGER.error("[Process] Failed to start mirror process", e);
+            state.set(State.ERROR);
+            return false;
+        }
+    }
+
+    /**
+     * 发送命令到镜像服 stdin（等价于控制台输入）。
+     */
+    public boolean sendCommand(String command) {
+        if (!running.get() || stdin == null) return false;
+        try {
+            stdin.write(command);
+            stdin.newLine();
+            stdin.flush();
+            LOGGER.info("[Process] → {}", command);
+            return true;
+        } catch (IOException e) {
+            LOGGER.error("[Process] Failed to send command", e);
+            return false;
+        }
+    }
+
+    /**
+     * 停止镜像服（优雅：先发 stop，超时后强杀）。
+     */
+    public void stop() {
+        if (state.get() == State.STOPPED) return;
+        state.set(State.STOPPING);
+
+        running.set(false);
+        try {
+            sendCommand("stop");
+            boolean exited = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!exited) {
+                LOGGER.warn("[Process] Graceful stop timed out, force killing");
+                process.destroyForcibly();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+        } finally {
+            process = null;
+            stdin = null;
+            state.set(State.STOPPED);
+            LOGGER.info("[Process] Mirror process stopped");
+        }
+    }
+
+    /**
+     * 强制杀死镜像服进程。
+     */
+    public void forceKill() {
+        running.set(false);
+        if (process != null) {
+            process.destroyForcibly();
+            process = null;
+        }
+        state.set(State.STOPPED);
+    }
+
+    private void readOutput(BufferedReader reader) {
+        try {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                LOGGER.info("[MirrorSrv] {}", line);
+                Consumer<String> listener = logListener;
+                if (listener != null) listener.accept(line);
+            }
+        } catch (IOException ignored) {
+        } finally {
+            running.set(false);
+            if (state.get() != State.STOPPING && state.get() != State.STOPPED) {
+                state.set(State.ERROR);
+                LOGGER.warn("[Process] Mirror process output stream closed");
+            }
+        }
+    }
+
+    private Path findServerJar() {
+        try (java.nio.file.DirectoryStream<Path> stream =
+                     java.nio.file.Files.newDirectoryStream(mirrorDir, "*.jar")) {
+            for (Path p : stream) {
+                String name = p.getFileName().toString();
+                if (name.contains("fabric-server-launch") || name.equals("server.jar")) {
+                    return p;
+                }
+            }
+        } catch (IOException ignored) {}
+        return null;
+    }
+}

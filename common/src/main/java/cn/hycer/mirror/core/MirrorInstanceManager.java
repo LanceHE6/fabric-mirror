@@ -5,73 +5,96 @@ import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.atomic.AtomicReference;
+import java.nio.file.Path;
 
 /**
- * 镜像实例生命周期管理器。
- * 管理 MirrorServer 的启动/停止/状态查询。
+ * 镜像实例生命周期管理器（独立进程方案）。
+ * 管理镜像服的克隆、启动、停止、状态查询。
  */
 public class MirrorInstanceManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("mirror");
     private static final MirrorInstanceManager INSTANCE = new MirrorInstanceManager();
 
-    private final AtomicReference<MirrorServer.State> state =
-            new AtomicReference<>(MirrorServer.State.STOPPED);
-    private volatile MirrorServer mirrorServer;
-
-    public enum MirrorState {
-        STOPPED, STARTING, RUNNING, STOPPING, ERROR
-    }
+    private MirrorProcess process;
+    private MirrorCloner cloner;
+    private volatile boolean started = false;
 
     private MirrorInstanceManager() {}
 
     public static MirrorInstanceManager getInstance() { return INSTANCE; }
 
-    public void init() {
+    /**
+     * 初始化，缓存主服运行目录。
+     */
+    public void init(MinecraftServer server) {
         MirrorConfig config = MirrorConfig.getInstance();
-        if (!config.isEnabled()) {
-            LOGGER.info("[Mirror] Mirror instance is disabled");
-            return;
-        }
-        LOGGER.info("[Mirror] MirrorInstanceManager initialized");
+        Path serverDir = server.getServerDirectory().toAbsolutePath().normalize();
+        this.cloner = new MirrorCloner(serverDir, config);
+        LOGGER.info("[Mirror] MirrorInstanceManager initialized (mirror dir: {})",
+                cloner.getMirrorDir());
     }
 
-    public boolean start(MinecraftServer mainServer) {
+    /**
+     * 启动镜像服（首次自动克隆）。
+     */
+    public boolean start() {
         MirrorConfig config = MirrorConfig.getInstance();
-        mirrorServer = new MirrorServer(mainServer, config);
-        boolean ok = mirrorServer.start();
-        if (ok) {
-            state.set(MirrorServer.State.RUNNING);
-            LOGGER.info("[Mirror] MirrorServer started on port {}", config.getPort());
-        } else {
-            state.set(MirrorServer.State.ERROR);
-            LOGGER.error("[Mirror] MirrorServer failed to start");
+        if (cloner == null) {
+            LOGGER.error("[Mirror] Not initialized");
+            return false;
         }
+
+        // 首次启动自动克隆
+        if (config.isAutoClone() && !cloner.isCloned()) {
+            LOGGER.info("[Mirror] First start, cloning main server...");
+            if (!cloner.cloneServer()) {
+                LOGGER.error("[Mirror] Clone failed");
+                return false;
+            }
+        }
+
+        if (process == null) {
+            process = new MirrorProcess(cloner.getMirrorDir(), config);
+        }
+        boolean ok = process.start();
+        started = ok;
         return ok;
     }
 
+    /**
+     * 停止镜像服。
+     */
     public boolean stop() {
-        if (mirrorServer == null) return false;
-        boolean ok = mirrorServer.stop();
-        state.set(ok ? MirrorServer.State.STOPPED : MirrorServer.State.ERROR);
-        return ok;
+        if (process == null) return false;
+        process.stop();
+        started = false;
+        return true;
     }
 
-    public MirrorState getState() {
-        return MirrorState.valueOf(state.get().name());
+    /**
+     * 强制杀死镜像服进程。
+     */
+    public void forceKill() {
+        if (process != null) process.forceKill();
+        started = false;
     }
 
-    public int getOnlinePlayerCount() {
-        return mirrorServer != null ? mirrorServer.getOnlinePlayerCount() : 0;
+    /**
+     * 发送命令到镜像服。
+     */
+    public boolean sendCommand(String command) {
+        return process != null && process.sendCommand(command);
     }
 
-    public double getTPS() {
-        return mirrorServer != null && state.get() == MirrorServer.State.RUNNING
-                ? mirrorServer.getTPS() : 0.0;
+    public MirrorProcess getProcess() { return process; }
+    public MirrorCloner getCloner() { return cloner; }
+
+    public boolean isRunning() {
+        return started && process != null && process.isRunning();
     }
 
-    public MirrorServer getMirrorServer() {
-        return mirrorServer;
+    public MirrorProcess.State getState() {
+        return process != null ? process.getState() : MirrorProcess.State.STOPPED;
     }
 }

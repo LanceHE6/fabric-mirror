@@ -1,7 +1,6 @@
 package cn.hycer.mirror.command;
 
 import cn.hycer.mirror.core.MirrorInstanceManager;
-import cn.hycer.mirror.core.ValidationCommands;
 import cn.hycer.mirror.network.PlayerTransferManager;
 import cn.hycer.mirror.sync.WorldSyncManager;
 import com.mojang.brigadier.context.CommandContext;
@@ -11,16 +10,18 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
-import java.nio.file.Path;
-
 import static net.minecraft.commands.Commands.literal;
 
 /**
  * 镜像实例指令模块。
+ *
+ * 主服侧：/mirror start|stop|status|sync|goto
+ * 镜像侧：/mirror return
  */
 public class MirrorCommands {
 
-    public static void register() {
+    /** 主服侧指令注册 */
+    public static void registerMainSide() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             var mirror = literal("mirror")
                     .requires(src -> Commands.LEVEL_ALL.check(src.permissions()))
@@ -33,15 +34,23 @@ public class MirrorCommands {
                             .executes(MirrorCommands::stopMirror))
                     .then(literal("sync")
                             .executes(MirrorCommands::previewSync)
-                            .then(literal("confirm").executes(MirrorCommands::executeSync))
-                            .then(literal("incremental").executes(MirrorCommands::executeIncrementalSync)))
-                    .then(literal("goto").executes(MirrorCommands::transferToMirror))
-                    .then(literal("return").executes(MirrorCommands::transferToMain));
+                            .then(literal("map").executes(MirrorCommands::syncMap))
+                            .then(literal("config").executes(MirrorCommands::syncConfig)))
+                    .then(literal("goto").executes(MirrorCommands::gotoMirror));
 
-            ValidationCommands.addToNode(mirror);
             dispatcher.register(mirror);
         });
     }
+
+    /** 镜像侧指令注册（仅 return） */
+    public static void registerMirrorSide() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(literal("mirror")
+                    .then(literal("return").executes(MirrorCommands::returnToMain)));
+        });
+    }
+
+    // ===== 主服侧指令实现 =====
 
     private static int showStatus(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
@@ -49,25 +58,24 @@ public class MirrorCommands {
         var state = mgr.getState();
         src.sendSystemMessage(Component.literal("§6===== Mirror 镜像实例状态 ====="));
         src.sendSystemMessage(Component.literal("  状态: §e" + state.name()));
-        src.sendSystemMessage(Component.literal("  在线玩家: §e" + mgr.getOnlinePlayerCount()));
-        if (state == MirrorInstanceManager.MirrorState.RUNNING) {
-            src.sendSystemMessage(Component.literal("  TPS: §e" + String.format("%.1f", mgr.getTPS())));
-        }
+        src.sendSystemMessage(Component.literal("  运行中: §e" + (mgr.isRunning() ? "是" : "否")));
         return 1;
     }
 
     private static int startMirror(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         var mgr = MirrorInstanceManager.getInstance();
-        if (mgr.getState() != MirrorInstanceManager.MirrorState.STOPPED) {
-            src.sendSystemMessage(Component.literal("§c镜像实例已在运行中。当前状态: " + mgr.getState()));
+
+        if (mgr.isRunning()) {
+            src.sendSystemMessage(Component.literal("§c镜像实例已在运行。"));
             return 0;
         }
+
         src.sendSystemMessage(Component.literal("§6正在启动镜像实例..."));
         new Thread(() -> {
-            boolean ok = mgr.start(src.getServer());
+            boolean ok = mgr.start();
             src.sendSystemMessage(ok ? Component.literal("§a镜像实例启动成功！")
-                    : Component.literal("§c镜像实例启动失败！查看日志。"));
+                    : Component.literal("§c镜像实例启动失败，查看日志。"));
         }, "Mirror-Start-Thread").start();
         return 1;
     }
@@ -75,102 +83,46 @@ public class MirrorCommands {
     private static int stopMirror(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         var mgr = MirrorInstanceManager.getInstance();
-        if (mgr.getState() != MirrorInstanceManager.MirrorState.RUNNING) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。当前状态: " + mgr.getState()));
+
+        if (!mgr.isRunning()) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未运行。"));
             return 0;
         }
+
         src.sendSystemMessage(Component.literal("§6正在停止镜像实例..."));
-        boolean ok = mgr.stop();
-        src.sendSystemMessage(ok ? Component.literal("§a镜像实例已停止。")
-                : Component.literal("§c停止失败！"));
+        mgr.stop();
+        src.sendSystemMessage(Component.literal("§a镜像实例已停止。"));
         return 1;
     }
 
     private static int previewSync(CommandContext<CommandSourceStack> ctx) {
-        ctx.getSource().sendSystemMessage(Component.literal("§6镜像世界同步将复制主服世界到镜像实例。\n§7使用 §e/mirror sync confirm §7确认。"));
+        ctx.getSource().sendSystemMessage(Component.literal(
+                "§6同步命令：\n" +
+                "§e/mirror sync map §7— 仅同步地图（复制世界文件+热重载）\n" +
+                "§e/mirror sync config §7— 同步配置/模组（重启镜像服）"));
         return 1;
     }
 
-    private static int executeSync(CommandContext<CommandSourceStack> ctx) {
+    private static int syncMap(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
-        var mgr = MirrorInstanceManager.getInstance();
-
-        if (mgr.getState() != MirrorInstanceManager.MirrorState.RUNNING) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行，无法同步。"));
-            return 0;
-        }
-
-        var server = src.getServer();
-        Path mainWorld = server.getServerDirectory().resolve("world");
-        Path mirrorWorld = Path.of("mirror_world");
-
-        // Force save-all before copying
-        src.sendSystemMessage(Component.literal("§6正在保存世界..."));
-        server.saveEverything(false, true, true);
-
-        var config = cn.hycer.mirror.config.MirrorConfig.getInstance();
-        var syncMgr = new WorldSyncManager(mainWorld, mirrorWorld, config);
-
-        long estSize = syncMgr.estimateSyncSize();
-        src.sendSystemMessage(Component.literal("§6正在同步世界数据... (约 " 
-                + (estSize / 1024 / 1024) + " MB)"));
-        
-        syncMgr.syncWorlds().thenAccept(result -> {
-            if (result.success) {
-                src.sendSystemMessage(Component.literal("§a同步完成！" 
-                        + (result.bytesCopied / 1024 / 1024) + " MB, "
-                        + result.durationMs + "ms"));
-                // Trigger hot reload on mirror
-                var mirror = mgr.getMirrorServer();
-                if (mirror != null) {
-                    src.sendSystemMessage(Component.literal("§6正在热重载镜像世界..."));
-                    mirror.reloadWorlds();
-                    src.sendSystemMessage(Component.literal("§a镜像世界已重载！"));
-                }
-            } else {
-                src.sendSystemMessage(Component.literal("§c同步失败: " + result.errorMessage));
-            }
-        });
+        WorldSyncManager.syncMap(src);
         return 1;
     }
 
-    private static int executeIncrementalSync(CommandContext<CommandSourceStack> ctx) {
+    private static int syncConfig(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
-        var mgr = MirrorInstanceManager.getInstance();
-        if (mgr.getState() != MirrorInstanceManager.MirrorState.RUNNING) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。"));
-            return 0;
-        }
-        var server = src.getServer();
-        Path mainWorld = server.getServerDirectory().resolve("world");
-
-        server.saveEverything(false, true, true);
-
-        var config = cn.hycer.mirror.config.MirrorConfig.getInstance();
-        var syncMgr = new WorldSyncManager(mainWorld, Path.of("mirror_world"), config);
-
-        src.sendSystemMessage(Component.literal("§6正在增量同步..."));
-        syncMgr.syncWorldsIncremental().thenAccept(result -> {
-            if (result.success) {
-                src.sendSystemMessage(Component.literal("§a增量同步完成！" 
-                        + (result.bytesCopied / 1024) + " KB, " + result.durationMs + "ms"));
-                var mirror = mgr.getMirrorServer();
-                if (mirror != null) mirror.reloadWorlds();
-            } else {
-                src.sendSystemMessage(Component.literal("§c增量同步失败: " + result.errorMessage));
-            }
-        });
+        WorldSyncManager.syncConfig(src);
         return 1;
     }
 
-    private static int transferToMirror(CommandContext<CommandSourceStack> ctx) {
+    private static int gotoMirror(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         if (!(src.getEntity() instanceof ServerPlayer player)) {
             src.sendSystemMessage(Component.literal("§c此命令只能由玩家执行。"));
             return 0;
         }
         var mgr = MirrorInstanceManager.getInstance();
-        if (mgr.getState() != MirrorInstanceManager.MirrorState.RUNNING) {
+        if (!mgr.isRunning()) {
             src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
@@ -178,7 +130,9 @@ public class MirrorCommands {
         return 1;
     }
 
-    private static int transferToMain(CommandContext<CommandSourceStack> ctx) {
+    // ===== 镜像侧指令实现 =====
+
+    private static int returnToMain(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         if (!(src.getEntity() instanceof ServerPlayer player)) {
             src.sendSystemMessage(Component.literal("§c此命令只能由玩家执行。"));

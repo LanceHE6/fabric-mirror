@@ -1,6 +1,9 @@
 package cn.hycer.mirror.sync;
 
 import cn.hycer.mirror.config.MirrorConfig;
+import cn.hycer.mirror.core.MirrorInstanceManager;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -8,235 +11,134 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /**
- * 世界同步模块。
- * 将主服世界数据复制到镜像实例世界目录。
+ * 世界同步模块（独立进程方案）。
+ *
+ * sync map: 踢回镜像服玩家 → 复制主服世界 → 镜像服热重载（或重启）
+ * sync config: 踢回玩家 → 复制配置/模组 → 重启镜像服进程
  */
 public class WorldSyncManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("mirror");
 
-    private final Path mainWorldPath;
-    private final Path mirrorWorldPath;
-    private final MirrorConfig config;
-
-    public WorldSyncManager(Path mainWorldPath, Path mirrorWorldPath, MirrorConfig config) {
-        this.mainWorldPath = mainWorldPath;
-        this.mirrorWorldPath = mirrorWorldPath;
-        this.config = config;
-    }
-
     /**
-     * 完整同步：复制所有维度的 region 文件。
+     * 仅同步地图：复制主服世界文件到镜像服，然后重启镜像服（简单可靠）。
      */
-    public CompletableFuture<SyncResult> syncWorlds() {
-        return CompletableFuture.supplyAsync(() -> {
-            SyncResult result = new SyncResult();
-            long startTime = System.currentTimeMillis();
+    public static void syncMap(CommandSourceStack src) {
+        var mgr = MirrorInstanceManager.getInstance();
+        var cloner = mgr.getCloner();
+        if (cloner == null) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            return;
+        }
 
+        src.sendSystemMessage(Component.literal("§6正在同步地图..."));
+
+        new Thread(() -> {
             try {
-                LOGGER.info("[WorldSync] Starting full world sync...");
-                LOGGER.info("[WorldSync] Source: {}", mainWorldPath);
-                LOGGER.info("[WorldSync] Target: {}", mirrorWorldPath);
-
-                List<String> dimensions = config.getSyncDimensions();
-                long totalBytes = 0;
-
-                for (String dim : dimensions) {
-                    Path srcDim = mainWorldPath.resolve("dimensions/minecraft/" + dim);
-                    Path dstDim = mirrorWorldPath.resolve("dimensions/minecraft/" + dim);
-                    long bytes = copyRegionFiles(srcDim, dstDim);
-                    totalBytes += bytes;
-                    LOGGER.info("[WorldSync] {} copied {} bytes", dim, bytes);
+                // 1. 若镜像服运行，先停止（保证世界文件已保存/解锁）
+                if (mgr.isRunning()) {
+                    src.sendSystemMessage(Component.literal("§7停止镜像服以同步地图..."));
+                    mgr.stop();
                 }
 
-                result.success = true;
-                result.bytesCopied = totalBytes;
-                result.durationMs = System.currentTimeMillis() - startTime;
-                LOGGER.info("[WorldSync] Sync complete: {} bytes in {}ms",
-                        totalBytes, result.durationMs);
+                // 2. 复制主服世界 → 镜像服
+                Path mainWorld = src.getServer().getServerDirectory().resolve("world");
+                Path mirrorWorld = cloner.getMirrorDir().resolve("world");
+
+                src.sendSystemMessage(Component.literal("§7复制世界文件..."));
+                long bytes = copyWorld(mainWorld, mirrorWorld);
+
+                src.sendSystemMessage(Component.literal("§a地图同步完成！(§e"
+                        + (bytes / 1024 / 1024) + " MB§a)"));
+
+                // 3. 重启镜像服
+                src.sendSystemMessage(Component.literal("§7重启镜像服..."));
+                boolean ok = mgr.start();
+                src.sendSystemMessage(ok ? Component.literal("§a镜像服已重启！")
+                        : Component.literal("§c镜像服重启失败，查看日志。"));
 
             } catch (Exception e) {
-                result.success = false;
-                result.errorMessage = e.getMessage();
-                LOGGER.error("[WorldSync] Sync failed", e);
+                LOGGER.error("[Sync] Map sync failed", e);
+                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
             }
-
-            return result;
-        });
+        }, "Mirror-Sync-Map-Thread").start();
     }
 
     /**
-     * 增量同步：仅复制自上次同步以来变更的 region 文件。
+     * 同步配置/模组：重新克隆配置和模组，重启镜像服。
      */
-    public CompletableFuture<SyncResult> syncWorldsIncremental() {
-        return CompletableFuture.supplyAsync(() -> {
-            SyncResult result = new SyncResult();
-            long startTime = System.currentTimeMillis();
+    public static void syncConfig(CommandSourceStack src) {
+        var mgr = MirrorInstanceManager.getInstance();
+        var cloner = mgr.getCloner();
+        if (cloner == null) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            return;
+        }
 
+        src.sendSystemMessage(Component.literal("§6正在同步配置..."));
+
+        new Thread(() -> {
             try {
-                LOGGER.info("[WorldSync] Starting incremental sync...");
-                long totalBytes = 0;
-
-                for (String dim : config.getSyncDimensions()) {
-                    Path srcDim = mainWorldPath.resolve("dimensions/minecraft/" + dim);
-                    Path dstDim = mirrorWorldPath.resolve("dimensions/minecraft/" + dim);
-                    long bytes = copyRegionFilesIncremental(srcDim, dstDim);
-                    totalBytes += bytes;
-                    LOGGER.info("[WorldSync] {} copied {} bytes (incremental)", dim, bytes);
+                if (mgr.isRunning()) {
+                    mgr.stop();
                 }
-
-                result.success = true;
-                result.bytesCopied = totalBytes;
-                result.durationMs = System.currentTimeMillis() - startTime;
-                LOGGER.info("[WorldSync] Incremental sync complete: {} bytes in {}ms",
-                        totalBytes, result.durationMs);
-
+                // 重新克隆（覆盖 mods/config/server.properties）
+                boolean cloned = cloner.cloneServer();
+                if (!cloned) {
+                    src.sendSystemMessage(Component.literal("§c配置同步失败。"));
+                    return;
+                }
+                src.sendSystemMessage(Component.literal("§a配置已同步，重启镜像服..."));
+                boolean ok = mgr.start();
+                src.sendSystemMessage(ok ? Component.literal("§a镜像服已重启！")
+                        : Component.literal("§c镜像服重启失败，查看日志。"));
             } catch (Exception e) {
-                result.success = false;
-                result.errorMessage = e.getMessage();
-                LOGGER.error("[WorldSync] Incremental sync failed", e);
+                LOGGER.error("[Sync] Config sync failed", e);
+                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
             }
-
-            return result;
-        });
+        }, "Mirror-Sync-Config-Thread").start();
     }
 
     /**
-     * 复制所有 region 文件（完整模式）。
-     * 目标中的旧 .mca 文件会被先删除。
+     * 复制主服世界目录（dimensions/minecraft/<维度>/region 等）到镜像服。
      */
-    private long copyRegionFiles(Path source, Path target) throws IOException {
-        if (!Files.exists(source)) {
-            LOGGER.warn("[WorldSync] Source does not exist: {}", source);
-            return 0;
-        }
-
-        // Ensure target directory exists
-        Path regionDir = target.resolve("region");
-        Files.createDirectories(regionDir);
-
-        // Delete old .mca files in target
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(regionDir, "*.mca")) {
-            for (Path old : stream) {
-                Files.delete(old);
-            }
-        } catch (IOException ignored) {}
-
-        // Find entities/poi directories if they exist
-        List<Path> sourceDirs = new ArrayList<>();
-        sourceDirs.add(source.resolve("region"));
-        if (Files.exists(source.resolve("entities"))) {
-            sourceDirs.add(source.resolve("entities"));
-        }
-        if (Files.exists(source.resolve("poi"))) {
-            sourceDirs.add(source.resolve("poi"));
-        }
-
-        long totalBytes = 0;
-        for (Path srcDir : sourceDirs) {
-            if (!Files.exists(srcDir)) continue;
-            Path dstDir = target.resolve(srcDir.getFileName());
-            Files.createDirectories(dstDir);
-
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(srcDir)) {
-                for (Path srcFile : stream) {
-                    if (!Files.isRegularFile(srcFile)) continue;
-                    Path dstFile = dstDir.resolve(srcFile.getFileName());
-                    long bytes = copyFile(srcFile, dstFile);
-                    totalBytes += bytes;
-                }
-            }
-        }
-
-        return totalBytes;
-    }
-
-    /**
-     * 增量复制：仅当源文件比目标文件新时才复制。
-     */
-    private long copyRegionFilesIncremental(Path source, Path target) throws IOException {
+    private static long copyWorld(Path source, Path target) throws IOException {
         if (!Files.exists(source)) return 0;
+        Files.createDirectories(target);
 
-        Path regionDir = target.resolve("region");
-        Files.createDirectories(regionDir);
-
-        Path srcRegion = source.resolve("region");
-        if (!Files.exists(srcRegion)) return 0;
-
-        long totalBytes = 0;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(srcRegion, "*.mca")) {
-            for (Path srcFile : stream) {
-                if (!Files.isRegularFile(srcFile)) continue;
-                Path dstFile = regionDir.resolve(srcFile.getFileName());
-
-                if (Files.exists(dstFile)) {
-                    long srcTime = Files.getLastModifiedTime(srcFile).toMillis();
-                    long dstTime = Files.getLastModifiedTime(dstFile).toMillis();
-                    if (srcTime <= dstTime) continue; // skip unchanged
-                }
-
-                long bytes = copyFile(srcFile, dstFile);
-                totalBytes += bytes;
+        long[] total = {0};
+        Files.walkFileTree(source, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                Path rel = source.relativize(dir);
+                Files.createDirectories(target.resolve(rel.toString()));
+                return FileVisitResult.CONTINUE;
             }
-        }
-
-        return totalBytes;
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Path rel = source.relativize(file);
+                Path dst = target.resolve(rel.toString());
+                total[0] += copyFile(file, dst);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return total[0];
     }
 
-    /**
-     * 使用 FileChannel.transferTo 高效复制单个文件。
-     */
-    private long copyFile(Path source, Path target) throws IOException {
-        try (FileChannel src = FileChannel.open(source, StandardOpenOption.READ);
-             FileChannel dst = FileChannel.open(target,
+    private static long copyFile(Path src, Path dst) throws IOException {
+        try (FileChannel in = FileChannel.open(src, StandardOpenOption.READ);
+             FileChannel out = FileChannel.open(dst,
                      StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                      StandardOpenOption.TRUNCATE_EXISTING)) {
-            long size = src.size();
-            long transferred = 0;
-            while (transferred < size) {
-                transferred += src.transferTo(transferred, size - transferred, dst);
+            long size = in.size();
+            long pos = 0;
+            while (pos < size) {
+                pos += in.transferTo(pos, size - pos, out);
             }
             return size;
         }
-    }
-
-    /**
-     * 检查同步前可用磁盘空间（简单估算）。
-     */
-    public long estimateSyncSize() {
-        long total = 0;
-        try {
-            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/overworld/region"));
-            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/the_nether/region"));
-            total += estimateDirSize(mainWorldPath.resolve("dimensions/minecraft/the_end/region"));
-        } catch (Exception e) {
-            LOGGER.warn("[WorldSync] Error estimating size", e);
-        }
-        return total;
-    }
-
-    private long estimateDirSize(Path dir) throws IOException {
-        if (!Files.exists(dir)) return 0;
-        long total = 0;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
-            for (Path f : stream) {
-                if (Files.isRegularFile(f)) {
-                    total += Files.size(f);
-                }
-            }
-        }
-        return total;
-    }
-
-    public static class SyncResult {
-        public long bytesCopied;
-        public long durationMs;
-        public boolean success;
-        public String errorMessage;
     }
 }
