@@ -112,6 +112,13 @@ public class MirrorInstanceManager {
         return started && process != null && process.isRunning();
     }
 
+    /**
+     * 镜像服 MC 是否已启动完成（Done），可以接受玩家连接。
+     */
+    public boolean isReady() {
+        return started && process != null && process.isReady();
+    }
+
     public MirrorProcess.State getState() {
         return process != null ? process.getState() : MirrorProcess.State.STOPPED;
     }

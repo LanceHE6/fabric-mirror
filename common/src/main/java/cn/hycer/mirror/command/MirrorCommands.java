@@ -139,6 +139,10 @@ public class MirrorCommands {
             src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
+        if (!mgr.isReady()) {
+            src.sendSystemMessage(Component.literal("§c镜像实例正在启动中，请稍后再试。"));
+            return 0;
+        }
         PlayerTransferManager.transferToMirror(player);
         return 1;
     }

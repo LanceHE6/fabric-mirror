@@ -30,6 +30,8 @@ public class MirrorProcess {
     private BufferedWriter stdin;
     private Thread outputThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    /** MC 服务器是否已启动完成（输出 "Done"） */
+    private final AtomicBoolean ready = new AtomicBoolean(false);
 
     /** 日志回调（用于捕获 "Done" 等启动完成信号） */
     private volatile Consumer<String> logListener;
@@ -44,6 +46,8 @@ public class MirrorProcess {
 
     public State getState() { return state.get(); }
     public boolean isRunning() { return running.get(); }
+    /** 镜像服 MC 是否已启动完成（Done），可以接受玩家连接 */
+    public boolean isReady() { return ready.get(); }
     public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
     public void setStopCallback(Runnable cb) { this.stopCallback = cb; }
 
@@ -97,6 +101,7 @@ public class MirrorProcess {
                     new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
 
             running.set(true);
+            ready.set(false); // 等待 Done 信号才就绪
             state.set(State.RUNNING);
             LOGGER.info("[Process] Mirror process started (pid={})", process.pid());
             return true;
@@ -137,6 +142,7 @@ public class MirrorProcess {
 
         // 标记停止中，阻止后续命令
         running.set(false);
+        ready.set(false);
 
         // 后台线程等待进程退出，超时强杀
         Thread waiter = new Thread(() -> {
@@ -176,6 +182,7 @@ public class MirrorProcess {
 
         sendCommand("stop");
         running.set(false);
+        ready.set(false);
 
         try {
             boolean exited = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
@@ -200,6 +207,7 @@ public class MirrorProcess {
      */
     public void forceKill() {
         running.set(false);
+        ready.set(false);
         if (process != null) {
             process.destroyForcibly();
             process = null;
@@ -211,6 +219,11 @@ public class MirrorProcess {
         try {
             String line;
             while ((line = reader.readLine()) != null) {
+                // 检测启动完成信号
+                if (line.contains("Done (")) {
+                    ready.set(true);
+                    LOGGER.info("[Process] Mirror server is ready");
+                }
                 // 只转发关键事件，避免镜像服日志刷屏污染主服控制台。
                 // 镜像服完整日志由自身写入 mirror/logs/latest.log。
                 if (isKeyEvent(line)) {
@@ -222,6 +235,7 @@ public class MirrorProcess {
         } catch (IOException ignored) {
         } finally {
             running.set(false);
+            ready.set(false);
             if (state.get() != State.STOPPING && state.get() != State.STOPPED) {
                 state.set(State.ERROR);
                 LOGGER.warn("[Process] Mirror process output stream closed");
