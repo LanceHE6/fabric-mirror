@@ -107,11 +107,12 @@ public class MirrorCloner {
             lines = new ArrayList<>(Files.readAllLines(mainProps));
         }
 
-        // 仅覆盖必要项（端口、世界名、监听地址）。
-        // 其余项（online-mode、max-players、view-distance、gamemode 等）均继承主服配置。
+        // 仅覆盖必要项。
+        // accepts-transfers 必须为 true，否则镜像服拒绝接受 Transfer 过来的玩家。
         lines = replaceOrAdd(lines, "server-port", String.valueOf(config.getPort()));
         lines = replaceOrAdd(lines, "level-name", "world");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
+        lines = replaceOrAdd(lines, "accepts-transfers", "true");
 
         Files.write(mirrorProps, lines);
         LOGGER.info("[Cloner] Generated mirror server.properties (port={})", config.getPort());

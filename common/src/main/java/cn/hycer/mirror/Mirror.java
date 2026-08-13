@@ -38,8 +38,16 @@ public class Mirror implements ModInitializer {
         MirrorCommands.registerMainSide();
 
         // 服务端启动后初始化镜像实例管理器（缓存运行目录）
-        ServerLifecycleEvents.SERVER_STARTED.register(server ->
-                MirrorInstanceManager.getInstance().init(server));
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            MirrorInstanceManager.getInstance().init(server);
+            // 确保主服接受 Transfer（玩家从镜像服 return 时，主服是 transfer 目标）
+            if (server instanceof net.minecraft.server.dedicated.DedicatedServer dedicated) {
+                if (!dedicated.getProperties().acceptsTransfers.get()) {
+                    dedicated.setAcceptsTransfers(true);
+                    LOGGER.warn("[Mirror] 主服 accepts-transfers 已自动设为 true（否则玩家无法从镜像服返回）");
+                }
+            }
+        });
 
         // 主服关闭时同步关闭镜像服（避免镜像服变孤儿进程继续运行）
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
