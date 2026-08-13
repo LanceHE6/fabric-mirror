@@ -27,3 +27,7 @@ dist/
 # Crash reports
 hs_err_pid*
 Mirror--- Fabric 单服务端伪独立镜像实例技术方案.md
+
+# 服务器备份/测试环境（不入库）
+MCCC/
+MCCC.zip

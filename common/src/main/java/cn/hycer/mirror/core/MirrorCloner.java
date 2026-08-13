@@ -47,15 +47,20 @@ public class MirrorCloner {
             LOGGER.info("[Cloner] Cloning main server → {}", mirrorDir);
             Files.createDirectories(mirrorDir);
 
-            // 1. 复制 server 核心 jar
-            Path mainJar = findServerJar(mainServerDir);
-            if (mainJar == null) {
-                LOGGER.error("[Cloner] Cannot find server jar in {}", mainServerDir);
+            // 1. 复制 server 核心 jar（启动器 + game jar 都要复制，启动器依赖 game jar）
+            //    例：fabric-server-launch.jar（启动器）+ server.jar（game jar）
+            if (!copyServerJars()) {
+                LOGGER.error("[Cloner] No server jar found in {}", mainServerDir);
                 return false;
             }
-            Files.copy(mainJar, mirrorDir.resolve(mainJar.getFileName()),
-                    StandardCopyOption.REPLACE_EXISTING);
-            LOGGER.info("[Cloner] Copied server jar: {}", mainJar.getFileName());
+
+            // 1.1 复制启动器配置（fabric-server-launcher.properties 里 serverJar=xxx）
+            Path launcherProps = mainServerDir.resolve("fabric-server-launcher.properties");
+            if (Files.exists(launcherProps)) {
+                Files.copy(launcherProps, mirrorDir.resolve("fabric-server-launcher.properties"),
+                        StandardCopyOption.REPLACE_EXISTING);
+                LOGGER.info("[Cloner] Copied fabric-server-launcher.properties");
+            }
 
             // 2. 复制 versions/（server 核心）、libraries/（依赖库）、.fabric/（fabric 配置）
             //    这样镜像服启动时无需重新下载，内网离线环境也能启动
@@ -150,27 +155,27 @@ public class MirrorCloner {
     }
 
     /**
-     * 在主服目录中查找 server 核心 jar。
-     * 优先级：fabric-server-launch.jar > server.jar > 任意 *.jar
+     * 复制主服根目录的所有 server 核心 jar（启动器 + game jar）。
+     * fabric-server-launch.jar（启动器）依赖 server.jar（game jar），两者都要复制。
+     * 排除 mirror 自己的 jar（那是模组，放在 mods/ 里）。
+     *
+     * @return 是否复制了至少一个 jar
      */
-    private static Path findServerJar(Path dir) throws IOException {
-        if (!Files.exists(dir)) return null;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.jar")) {
-            List<Path> jars = new ArrayList<>();
-            for (Path p : stream) jars.add(p);
-
-            for (Path j : jars) {
-                if (j.getFileName().toString().contains("fabric-server-launch")) return j;
+    private boolean copyServerJars() throws IOException {
+        if (!Files.exists(mainServerDir)) return false;
+        int count = 0;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(mainServerDir, "*.jar")) {
+            for (Path jar : stream) {
+                String name = jar.getFileName().toString();
+                // 排除 mirror 模组自己的 jar（不是 server 核心）
+                if (name.startsWith("mirror-")) continue;
+                Files.copy(jar, mirrorDir.resolve(name),
+                        StandardCopyOption.REPLACE_EXISTING);
+                LOGGER.info("[Cloner] Copied server jar: {}", name);
+                count++;
             }
-            for (Path j : jars) {
-                if (j.getFileName().toString().equals("server.jar")) return j;
-            }
-            // 排除 mirror 自己的 jar，取第一个非 mirror jar
-            for (Path j : jars) {
-                if (!j.getFileName().toString().startsWith("mirror")) return j;
-            }
-            return jars.isEmpty() ? null : jars.get(0);
         }
+        return count > 0;
     }
 
     private static boolean hasServerJar(Path dir) {
