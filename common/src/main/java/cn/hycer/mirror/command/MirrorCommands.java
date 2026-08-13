@@ -1,6 +1,7 @@
 package cn.hycer.mirror.command;
 
 import cn.hycer.mirror.core.MirrorInstanceManager;
+import cn.hycer.mirror.core.MirrorProcess;
 import cn.hycer.mirror.network.PlayerTransferManager;
 import cn.hycer.mirror.sync.WorldSyncManager;
 import com.mojang.brigadier.context.CommandContext;
@@ -57,9 +58,18 @@ public class MirrorCommands {
         var mgr = MirrorInstanceManager.getInstance();
         var state = mgr.getState();
         src.sendSystemMessage(Component.literal("§6===== Mirror 镜像实例状态 ====="));
-        src.sendSystemMessage(Component.literal("  状态: §e" + state.name()));
-        src.sendSystemMessage(Component.literal("  运行中: §e" + (mgr.isRunning() ? "是" : "否")));
+        src.sendSystemMessage(Component.literal("  状态: §e" + stateLabel(state)));
         return 1;
+    }
+
+    private static String stateLabel(MirrorProcess.State state) {
+        return switch (state) {
+            case STOPPED -> "已停止";
+            case STARTING -> "启动中";
+            case RUNNING -> "运行中";
+            case STOPPING -> "停止中";
+            case ERROR -> "错误";
+        };
     }
 
     private static int startMirror(CommandContext<CommandSourceStack> ctx) {
