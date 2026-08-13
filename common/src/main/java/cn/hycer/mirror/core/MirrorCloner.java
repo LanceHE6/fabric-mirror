@@ -57,13 +57,19 @@ public class MirrorCloner {
                     StandardCopyOption.REPLACE_EXISTING);
             LOGGER.info("[Cloner] Copied server jar: {}", mainJar.getFileName());
 
-            // 2. 复制 mods/
+            // 2. 复制 versions/（server 核心）、libraries/（依赖库）、.fabric/（fabric 配置）
+            //    这样镜像服启动时无需重新下载，内网离线环境也能启动
+            copyDirIfExists(mainServerDir.resolve("versions"), mirrorDir.resolve("versions"));
+            copyDirIfExists(mainServerDir.resolve("libraries"), mirrorDir.resolve("libraries"));
+            copyDirIfExists(mainServerDir.resolve(".fabric"), mirrorDir.resolve(".fabric"));
+
+            // 3. 复制 mods/
             copyDirIfExists(mainServerDir.resolve("mods"), mirrorDir.resolve("mods"));
 
-            // 3. 复制 config/
+            // 4. 复制 config/
             copyDirIfExists(mainServerDir.resolve("config"), mirrorDir.resolve("config"));
 
-            // 4. 复制 eula.txt
+            // 5. 复制 eula.txt
             Path mainEula = mainServerDir.resolve("eula.txt");
             if (Files.exists(mainEula)) {
                 Files.copy(mainEula, mirrorDir.resolve("eula.txt"),
@@ -72,7 +78,7 @@ public class MirrorCloner {
                 Files.writeString(mirrorDir.resolve("eula.txt"), "eula=true\n");
             }
 
-            // 5. 生成镜像服 server.properties
+            // 6. 生成镜像服 server.properties
             generateMirrorServerProperties();
 
             LOGGER.info("[Cloner] Clone complete");
