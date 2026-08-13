@@ -41,6 +41,22 @@ public class Mirror implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(server ->
                 MirrorInstanceManager.getInstance().init(server));
 
+        // 主服关闭时同步关闭镜像服（避免镜像服变孤儿进程继续运行）
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            if (MirrorInstanceManager.getInstance().isRunning()) {
+                LOGGER.info("[Mirror] Main server stopping, shutting down mirror...");
+                MirrorInstanceManager.getInstance().forceKill();
+            }
+        });
+
+        // 兜底：JVM 退出时确保镜像服进程被清理（覆盖异常崩溃等未走 SERVER_STOPPING 的场景）
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (MirrorInstanceManager.getInstance().isRunning()) {
+                LOGGER.info("[Mirror] JVM shutdown, force killing mirror...");
+                MirrorInstanceManager.getInstance().forceKill();
+            }
+        }, "Mirror-Shutdown-Hook"));
+
         LOGGER.info("[Mirror] Mirror mod initialized (main side). Use /mirror start");
     }
 }
