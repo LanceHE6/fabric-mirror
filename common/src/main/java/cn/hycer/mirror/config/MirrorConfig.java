@@ -102,6 +102,10 @@ public class MirrorConfig {
     @JsonIgnore
     public String getMirrorTransferHost() { return mirror.mirrorTransferHost; }
 
+    /** Mirror public port for the goto Transfer target (0 = fallback to local listen port) */
+    @JsonIgnore
+    public int getMirrorPublicPort() { return mirror.mirrorPublicPort > 0 ? mirror.mirrorPublicPort : mirror.port; }
+
     @JsonIgnore
     public boolean isAutoClone() { return mirror.autoClone; }
 
@@ -142,6 +146,10 @@ public class MirrorConfig {
         /** 镜像服 transfer 地址（goto 时 Transfer 目标，A 记录指向主服公网入口） */
         @JsonProperty("mirror_transfer_host")
         private String mirrorTransferHost = "";
+
+        /** Mirror public port (frp-mapped public port used as the goto Transfer target port; 0 = fallback to "port") */
+        @JsonProperty("mirror_public_port")
+        private int mirrorPublicPort = 0;
 
         /** 首次 /mirror start 时自动克隆主服 */
         @JsonProperty("auto_clone")

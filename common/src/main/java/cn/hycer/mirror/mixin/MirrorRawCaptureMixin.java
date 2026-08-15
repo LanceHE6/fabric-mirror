@@ -24,6 +24,6 @@ public abstract class MirrorRawCaptureMixin {
     @Inject(method = "channelActive", at = @At("HEAD"), remap = false)
     private void onChannelActive(ChannelHandlerContext ctx, CallbackInfo ci) {
         ctx.pipeline().addFirst("mirror_captor", new RawByteCaptor());
-        LOGGER.info("[Proxy] RawByteCaptor installed, pipeline={}", ctx.pipeline().names());
+        // LOGGER.info("[Proxy] RawByteCaptor installed, pipeline={}", ctx.pipeline().names());
     }
 }

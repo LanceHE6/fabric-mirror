@@ -259,15 +259,20 @@ public class MirrorProcess {
     }
 
     private Path findServerJar() {
+        // Prefer the Fabric launcher jar (loads mods); fall back to vanilla server.jar only if absent.
+        Path fallback = null;
         try (java.nio.file.DirectoryStream<Path> stream =
                      java.nio.file.Files.newDirectoryStream(mirrorDir, "*.jar")) {
             for (Path p : stream) {
                 String name = p.getFileName().toString();
-                if (name.contains("fabric-server-launch") || name.equals("server.jar")) {
+                if (name.contains("fabric-server-launch")) {
                     return p;
+                }
+                if (name.equals("server.jar") && fallback == null) {
+                    fallback = p;
                 }
             }
         } catch (IOException ignored) {}
-        return null;
+        return fallback;
     }
 }
