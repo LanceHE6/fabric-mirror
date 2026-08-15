@@ -29,6 +29,12 @@ public abstract class MirrorTransferProxyMixin {
 
     @Inject(method = "handleIntention", at = @At("HEAD"), cancellable = true, remap = false)
     private void onIntention(ClientIntentionPacket packet, CallbackInfo ci) {
+        // 镜像服自身不拦截 TRANSFER：主服桥接过来的连接会带着 TRANSFER 握手包，
+        // 若镜像服也走桥接逻辑，会把连接又桥回自己（127.0.0.1:port）造成死循环，玩家登录超时。
+        if (MirrorConfig.isMirrorInstance()) {
+            return;
+        }
+
         if (packet.intention() != ClientIntent.TRANSFER) {
             return; // 只处理 TRANSFER 意图
         }

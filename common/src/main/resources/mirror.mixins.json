@@ -4,7 +4,9 @@
   "package": "cn.hycer.mirror.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
-    "MirrorTransferProxyMixin"
+    "MirrorTransferProxyMixin",
+    "MirrorRawCaptureMixin",
+    "MirrorOfflineProfileMixin"
   ],
   "injectors": {
     "defaultRequire": 1

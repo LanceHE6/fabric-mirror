@@ -27,7 +27,7 @@ public class PlayerTransferManager {
             // 未配置 mirror_transfer_host 时回退到直连镜像服
             host = config.getPublicAddress();
         }
-        int port = config.getMainPort();
+        int port = config.getPort();
 
         player.connection.send(new ClientboundTransferPacket(host, port));
         LOGGER.info("[Transfer] {} → mirror ({}:{})", player.getName().getString(), host, port);

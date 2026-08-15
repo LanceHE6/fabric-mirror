@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Transfer 桥接器。
@@ -26,12 +28,6 @@ import java.lang.reflect.Field;
 public class TransferBridge {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("mirror");
-
-    private static final String[] MC_PIPELINE_HANDLERS = {
-            "splitter", "decoder", "prepender", "encoder",
-            "timeout", "packet_handler", "bundler", "unbundler",
-            "decrypt", "encrypt", "decompress", "compress"
-    };
 
     private static Field connectionChannelField;
 
@@ -65,10 +61,21 @@ public class TransferBridge {
 
         LOGGER.info("[Proxy] Bridging transfer connection to {}:{}", mirrorHost, mirrorPort);
 
-        // 1. 编码握手包（用于回放）
-        ByteBuf handshake = encodeHandshake(packet);
+        // 1. 取出 channelActive 时安装的捕获器（mirror_captor）累积的原始字节。
+        //    客户端把握手包 + 登录包在同一个 TCP 读里发来（共 43 字节），
+        //    必须在此处（stripMcPipeline 之前）取走，否则捕获器被移除时
+        //    handlerRemoved 会释放并清空缓冲，导致登录包丢失。
+        RawByteCaptor captor = (RawByteCaptor) clientChannel.pipeline().get("mirror_captor");
+        final ByteBuf initial = (captor != null) ? captor.takeCapturedBytes() : null;
+        LOGGER.info("[Proxy] captured {} bytes from client", initial != null ? initial.readableBytes() : 0);
 
-        // 2. 建立到镜像服的纯 Netty 连接（复用客户端 event loop）
+        // 2. 移除所有 MC 管线 handler（splitter/decoder/packet_handler 等）
+        stripMcPipeline(clientChannel);
+        // strip 移除了 FlowControlHandler/ReadTimeoutHandler 等，确保 channel 继续自动读取客户端字节
+        clientChannel.config().setAutoRead(true);
+        clientChannel.read();
+
+        // 3. 建立到镜像服的纯 Netty 连接（复用客户端 event loop）
         Bootstrap bootstrap = new Bootstrap();
         bootstrap.group(clientChannel.eventLoop())
                 .channel(NioSocketChannel.class)
@@ -85,20 +92,22 @@ public class TransferBridge {
                 LOGGER.error("[Proxy] Failed to connect mirror server", future.cause());
                 clientConnection.disconnect(
                         net.minecraft.network.chat.Component.literal("Transfer 失败：无法连接镜像服"));
-                handshake.release();
                 return;
             }
 
             Channel mirror = future.channel();
             LOGGER.info("[Proxy] Mirror connection established, switching to raw passthrough");
 
-            // 3. 回放握手包给镜像服
-            mirror.writeAndFlush(handshake);
+            // 4. 回放捕获的原始字节（握手 + 登录包），否则回退重编码握手
+            if (initial != null && initial.isReadable()) {
+                LOGGER.info("[Proxy] replaying {} bytes to mirror", initial.readableBytes());
+                mirror.writeAndFlush(initial);
+            } else {
+                LOGGER.info("[Proxy] no captured bytes, replaying encoded handshake");
+                mirror.writeAndFlush(encodeHandshake(packet));
+            }
 
-            // 4. 切换客户端 channel pipeline 为字节透传
-            stripMcPipeline(client);
-
-            // 5. 双向字节流透传
+            // 5. 建立双向字节流透传
             client.pipeline().addLast("proxy", new PassthroughHandler(mirror, "client->mirror"));
             mirror.pipeline().addLast("proxy", new PassthroughHandler(client, "mirror->client"));
         });
@@ -126,15 +135,20 @@ public class TransferBridge {
     }
 
     /**
-     * 移除客户端 channel 的 MC packet pipeline，只保留原始字节通道。
+     * 移除客户端 channel 的所有 handler，只保留原始字节通道。
+     *
+     * MC 26.2 的管线里除 splitter/decoder/prepender/encoder/packet_handler 外，
+     * 还有 timeout、legacy_query、flow_control、inbound_config、hackfix 等 handler。
+     * 只按固定名字列表移除会漏掉，导致客户端后续字节打到错误 handler。
+     * 因此这里改为遍历 names() 移除全部 handler，彻底切断 MC 协议处理。
+     * 注意：mirror_captor 捕获的原始字节必须在调用本方法前先取走。
      */
     private static void stripMcPipeline(Channel channel) {
         ChannelPipeline pipeline = channel.pipeline();
-        for (String name : MC_PIPELINE_HANDLERS) {
+        List<String> names = new ArrayList<>(pipeline.names());
+        for (String name : names) {
             try {
-                if (pipeline.get(name) != null) {
-                    pipeline.remove(name);
-                }
+                pipeline.remove(name);
             } catch (Exception ignored) {
             }
         }
@@ -163,7 +177,13 @@ public class TransferBridge {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             if (msg instanceof ByteBuf buf) {
-                // 两个 channel 在同一 event loop，直接转发（writeAndFlush 完成后自动释放）
+                LOGGER.info("[Proxy] {} +{} bytes", label, buf.readableBytes());
+                int n = Math.min(48, buf.readableBytes());
+                byte[] head = new byte[n];
+                buf.getBytes(buf.readerIndex(), head);
+                StringBuilder sb = new StringBuilder();
+                for (byte b : head) { sb.append(String.format("%02x ", b)); }
+                LOGGER.info("[Proxy] {} head: {}", label, sb.toString().trim());
                 target.writeAndFlush(buf);
             } else {
                 io.netty.util.ReferenceCountUtil.release(msg);
@@ -173,13 +193,14 @@ public class TransferBridge {
         @Override
         public void channelInactive(ChannelHandlerContext ctx) {
             // 一端断开，关闭另一端
+            LOGGER.info("[Proxy] {} inactive", label);
             target.close();
             ctx.fireChannelInactive();
         }
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            LOGGER.debug("[Proxy] {} error: {}", label, cause.getMessage());
+            LOGGER.error("[Proxy] {} exceptionCaught", label, cause);
             target.close();
             ctx.close();
         }

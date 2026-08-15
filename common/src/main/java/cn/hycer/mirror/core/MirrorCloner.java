@@ -113,6 +113,9 @@ public class MirrorCloner {
         lines = replaceOrAdd(lines, "level-name", "world");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
         lines = replaceOrAdd(lines, "accepts-transfers", "true");
+        // 在线模式：镜像服继承主服的 online-mode / enforce-secure-profile（不覆盖，保持在线认证）。
+        // 压缩暂禁用，避免字节透传下 setupCompression 时序问题（后续可恢复测试）。
+        lines = replaceOrAdd(lines, "network-compression-threshold", "-1");
 
         Files.write(mirrorProps, lines);
         LOGGER.info("[Cloner] Generated mirror server.properties (port={})", config.getPort());
