@@ -4,6 +4,7 @@ import cn.hycer.mirror.core.MirrorInstanceManager;
 import cn.hycer.mirror.core.MirrorProcess;
 import cn.hycer.mirror.network.PlayerTransferManager;
 import cn.hycer.mirror.sync.WorldSyncManager;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
@@ -11,6 +12,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 
+import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
 
 /**
@@ -20,6 +22,8 @@ import static net.minecraft.commands.Commands.literal;
  * 镜像侧：/mirror return
  */
 public class MirrorCommands {
+
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("mirror");
 
     /** 主服侧指令注册 */
     public static void registerMainSide() {
@@ -40,7 +44,11 @@ public class MirrorCommands {
                             .executes(MirrorCommands::previewSync)
                             .then(literal("map").executes(MirrorCommands::syncMap))
                             .then(literal("config").executes(MirrorCommands::syncConfig)))
-                    .then(literal("goto").executes(MirrorCommands::gotoMirror));
+                    .then(literal("goto").executes(MirrorCommands::gotoMirror))
+                    .then(literal("exec")
+                            .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
+                            .then(argument("command", StringArgumentType.greedyString())
+                                    .executes(MirrorCommands::execMirror)));
 
             dispatcher.register(mirror);
         });
@@ -177,6 +185,47 @@ public class MirrorCommands {
             return 0;
         }
         PlayerTransferManager.transferToMirror(player);
+        return 1;
+    }
+
+    private static int execMirror(CommandContext<CommandSourceStack> ctx) {
+        var src = ctx.getSource();
+        String cmd = StringArgumentType.getString(ctx, "command");
+        var mgr = MirrorInstanceManager.getInstance();
+
+        if (!mgr.isRunning()) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
+            return 0;
+        }
+        var proc = mgr.getProcess();
+        if (proc == null) {
+            src.sendSystemMessage(Component.literal("§c镜像进程不可用。"));
+            return 0;
+        }
+
+        // 命令执行线程：向镜像服 stdin 写入命令（非阻塞），结果在后台线程捕获后再调度回主线程转发
+        var server = src.getServer();
+        // 先开捕获窗口再发命令：镜像服输出可能在发送后立即到达，捕获未就位会漏掉开头
+        final int timeoutMs = 5000;
+        proc.captureOutput(timeoutMs, lines -> server.execute(() -> {
+            if (lines.isEmpty()) {
+                LOGGER.info("[Exec] /{} -> no output", cmd);
+                src.sendSystemMessage(Component.literal("§7(mirror) §e/" + cmd + "§7: 无输出"));
+                return;
+            }
+            LOGGER.info("[Exec] /{} -> {}", cmd, String.join(" | ", lines));
+            src.sendSystemMessage(Component.literal("§7---- §e/" + cmd + " §7----"));
+            for (String l : lines) {
+                src.sendSystemMessage(Component.literal("§7" + l));
+            }
+            src.sendSystemMessage(Component.literal("§7----------------"));
+        }));
+        if (!proc.sendCommand(cmd)) {
+            proc.clearCapture(); // 发送失败，取消捕获窗口
+            src.sendSystemMessage(Component.literal("§c命令发送失败，查看日志。"));
+            return 0;
+        }
+        src.sendSystemMessage(Component.literal("§7已发送至镜像服: §e/" + cmd));
         return 1;
     }
 

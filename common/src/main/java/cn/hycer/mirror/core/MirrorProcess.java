@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,6 +46,12 @@ public class MirrorProcess {
     /** 启动失败回调（进程退出但未 Done 时触发） */
     private volatile Runnable failCallback;
 
+    /** 命令输出捕获：非 null 时收集镜像服输出行，空行或超时后回调结算 */
+    private volatile List<String> captureBuffer;
+    private volatile Consumer<List<String>> captureCallback;
+    private volatile long captureStartMs;
+    private volatile long captureTimeoutMs;
+
     public MirrorProcess(Path mirrorDir, MirrorConfig config) {
         this.mirrorDir = mirrorDir;
         this.config = config;
@@ -58,6 +65,55 @@ public class MirrorProcess {
     public void setStopCallback(Runnable cb) { this.stopCallback = cb; }
     public void setReadyCallback(Runnable cb) { this.readyCallback = cb; }
     public void setFailCallback(Runnable cb) { this.failCallback = cb; }
+
+    /**
+     * 开启命令输出捕获。
+     * 必须在 sendCommand 之前调用（镜像服输出可能在发送后立即到达，捕获要先就位）。
+     * 收集镜像服 stdout 行直到：收到空行（MC 控制台命令输出结束分隔）或超时，然后回调结算。
+     *
+     * @param timeoutMs 超时兜底（镜像服无输出时也能正常结算）
+     * @param callback  结算回调，参数为捕获到的行列表（可能为空）；在捕获线程触发，调用方勿直接操作主服线程对象
+     */
+    public void captureOutput(int timeoutMs, Consumer<List<String>> callback) {
+        List<String> buffer = new ArrayList<>();
+        captureBuffer = buffer;
+        captureCallback = callback;
+        captureStartMs = System.currentTimeMillis();
+        captureTimeoutMs = timeoutMs;
+
+        // 超时兜底线程：无输出/无空行时强制结算
+        Thread t = new Thread(() -> {
+            try {
+                Thread.sleep(timeoutMs);
+            } catch (InterruptedException ignored) {
+            }
+            Consumer<List<String>> cb = settleCapture(buffer);
+            if (cb != null) {
+                cb.accept(buffer);
+            }
+        }, "Mirror-Capture-Timeout");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * 取消当前命令输出捕获（发送命令失败等场景）。
+     */
+    public void clearCapture() {
+        settleCapture(null);
+    }
+
+    /**
+     * 结算捕获：仅当捕获仍是 expect 引用的那次时置空并返回其回调（保证只结算一次）。
+     * 返回回调后由调用方在锁外执行。
+     */
+    private synchronized Consumer<List<String>> settleCapture(List<String> expect) {
+        if (captureBuffer != expect) return null; // 已被结算，或已被新的捕获替换
+        captureBuffer = null;
+        Consumer<List<String>> cb = captureCallback;
+        captureCallback = null;
+        return cb;
+    }
 
     /**
      * 启动镜像服进程。
@@ -227,6 +283,21 @@ public class MirrorProcess {
         try {
             String line;
             while ((line = reader.readLine()) != null) {
+                // 命令输出捕获：收集行直到空行（命令输出结束）或超时
+                List<String> cap = captureBuffer;
+                if (cap != null) {
+                    if (line.isEmpty() || System.currentTimeMillis() - captureStartMs > captureTimeoutMs) {
+                        Consumer<List<String>> cb = settleCapture(cap);
+                        if (cb != null) {
+                            cb.accept(cap);
+                        }
+                    } else {
+                        String cleaned = cleanConsoleLine(line);
+                        if (!cleaned.isEmpty()) {
+                            cap.add(cleaned);
+                        }
+                    }
+                }
                 // 检测启动完成信号
                 if (line.contains("Done (")) {
                     ready.set(true);
@@ -247,6 +318,14 @@ public class MirrorProcess {
             }
         } catch (IOException ignored) {
         } finally {
+            // 进程退出：结算未完成的命令捕获，避免回调悬空
+            List<String> cap = captureBuffer;
+            if (cap != null) {
+                Consumer<List<String>> cb = settleCapture(cap);
+                if (cb != null) {
+                    cb.accept(cap);
+                }
+            }
             boolean wasReady = ready.get();
             running.set(false);
             ready.set(false);
@@ -264,6 +343,18 @@ public class MirrorProcess {
                 LOGGER.warn("[Process] Mirror process output stream closed");
             }
         }
+    }
+
+    /**
+     * 清洗镜像服控制台行：去掉 log4j 时间戳+线程+级别前缀，如
+     * "[14:05:18] [Server thread/INFO]: Op'd hycer" → "Op'd hycer"。
+     * 纯文本行原样返回。
+     */
+    private static String cleanConsoleLine(String line) {
+        if (line == null) return "";
+        String l = line.replaceFirst(
+                "^\\[\\d{2}:\\d{2}:\\d{2}\\] \\[[^\\]]+\\](?:/[A-Z]+)?:\\s*", "");
+        return l.trim();
     }
 
     /**
