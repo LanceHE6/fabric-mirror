@@ -48,7 +48,21 @@ public class MirrorCommands {
                     .then(literal("exec")
                             .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
                             .then(argument("command", StringArgumentType.greedyString())
-                                    .executes(MirrorCommands::execMirror)));
+                                    .executes(MirrorCommands::execMirror)))
+                    .then(literal("setServerProperties")
+                            .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
+                            .then(argument("config", StringArgumentType.word())
+                                    .suggests((ctx, builder) -> {
+                                        var cloner = MirrorInstanceManager.getInstance().getCloner();
+                                        if (cloner != null) {
+                                            for (String k : cloner.listMirrorServerPropertyKeys()) {
+                                                builder.suggest(k);
+                                            }
+                                        }
+                                        return builder.buildFuture();
+                                    })
+                                    .then(argument("value", StringArgumentType.greedyString())
+                                            .executes(MirrorCommands::setServerProperties))));
 
             dispatcher.register(mirror);
         });
@@ -226,6 +240,35 @@ public class MirrorCommands {
             return 0;
         }
         src.sendSystemMessage(Component.literal("§7已发送至镜像服: §e/" + cmd));
+        return 1;
+    }
+
+    private static int setServerProperties(CommandContext<CommandSourceStack> ctx) {
+        var src = ctx.getSource();
+        String key = StringArgumentType.getString(ctx, "config");
+        String value = StringArgumentType.getString(ctx, "value");
+        var mgr = MirrorInstanceManager.getInstance();
+        var cloner = mgr.getCloner();
+
+        if (cloner == null) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            return 0;
+        }
+        var clonerKeys = cloner.listMirrorServerPropertyKeys();
+        if (!clonerKeys.contains(key)) {
+            src.sendSystemMessage(Component.literal("§c配置项不存在: §e" + key
+                    + "§c。可用:" + (clonerKeys.isEmpty() ? " 无" : "")));
+            if (!clonerKeys.isEmpty()) {
+                src.sendSystemMessage(Component.literal("§7" + String.join("§7, §e", clonerKeys)));
+            }
+            return 0;
+        }
+        if (!cloner.setMirrorServerProperty(key, value)) {
+            src.sendSystemMessage(Component.literal("§c修改失败，查看日志。"));
+            return 0;
+        }
+        src.sendSystemMessage(Component.literal("§a已修改镜像服配置 §e" + key + "§a = §e" + value));
+        src.sendSystemMessage(Component.literal("§7重启镜像服后生效（/mirror restart）"));
         return 1;
     }
 

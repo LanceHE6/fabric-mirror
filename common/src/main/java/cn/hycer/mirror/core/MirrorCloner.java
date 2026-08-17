@@ -30,6 +30,57 @@ public class MirrorCloner {
 
     public Path getMirrorDir() { return mirrorDir; }
 
+    /** 镜像服 server.properties 路径 */
+    public Path getServerPropertiesPath() {
+        return mirrorDir.resolve("server.properties");
+    }
+
+    /**
+     * 列出镜像服 server.properties 中所有配置项 key（含 # 注释掉的项，克隆时可覆盖）。
+     * 供 /mirror setServerProperties 的指令提示使用。
+     */
+    public List<String> listMirrorServerPropertyKeys() {
+        Path p = getServerPropertiesPath();
+        if (!Files.exists(p)) return List.of();
+        try {
+            List<String> keys = new ArrayList<>();
+            for (String line : Files.readAllLines(p)) {
+                String t = line.trim();
+                if (t.isEmpty()) continue;
+                int eq = t.indexOf('=');
+                if (eq <= 0) continue;
+                String key = t.startsWith("#") ? t.substring(1, eq).trim() : t.substring(0, eq).trim();
+                if (!key.isEmpty() && !keys.contains(key)) {
+                    keys.add(key);
+                }
+            }
+            return keys;
+        } catch (IOException e) {
+            LOGGER.error("[Cloner] Failed to read mirror server.properties", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 修改镜像服 server.properties 的单个配置项（key 不存在则追加）。
+     * 不重启镜像服，需调用方提示"重启后生效"。
+     */
+    public boolean setMirrorServerProperty(String key, String value) {
+        Path p = getServerPropertiesPath();
+        try {
+            List<String> lines = Files.exists(p)
+                    ? new ArrayList<>(Files.readAllLines(p))
+                    : new ArrayList<>();
+            lines = replaceOrAdd(lines, key, value);
+            Files.write(p, lines);
+            LOGGER.info("[Cloner] Mirror server.properties: {}={}", key, value);
+            return true;
+        } catch (IOException e) {
+            LOGGER.error("[Cloner] Failed to set mirror server property {}={}", key, value, e);
+            return false;
+        }
+    }
+
     /**
      * 仅同步 config 目录（/mirror sync config 专用）。
      * 只复制主服 config/ → 镜像服 config/，不复制 jar/mods/versions/libraries/eula，
