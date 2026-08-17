@@ -130,6 +130,45 @@ public class WorldSyncManager {
     }
 
     /**
+     * 同步模组：完整对齐主服 mods/（复制+覆盖+删除多余），重启镜像服。
+     */
+    public static void syncMod(CommandSourceStack src) {
+        var mgr = MirrorInstanceManager.getInstance();
+        var cloner = mgr.getCloner();
+        if (cloner == null) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            return;
+        }
+
+        src.sendSystemMessage(Component.literal("§6正在同步模组..."));
+
+        new Thread(() -> {
+            var server = src.getServer();
+            try {
+                if (mgr.isRunning()) {
+                    mgr.stopAndWait();
+                }
+                // 完整对齐主服 mods/（复制+覆盖+删除镜像服多余 mod），不碰其它内容
+                boolean synced = cloner.syncModsOnly();
+                if (!synced) {
+                    src.sendSystemMessage(Component.literal("§c模组同步失败。"));
+                    return;
+                }
+                src.sendSystemMessage(Component.literal("§a模组已同步，重启镜像服..."));
+                // 等 Done 后提示重启完成
+                mgr.start(
+                        () -> server.execute(() ->
+                                src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                        () -> server.execute(() ->
+                                src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。"))));
+            } catch (Exception e) {
+                LOGGER.error("[Sync] Mod sync failed", e);
+                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
+            }
+        }, "Mirror-Sync-Mod-Thread").start();
+    }
+
+    /**
      * 复制主服世界目录到镜像服。
      * 跳过 session.lock（主服独占锁定，镜像服启动时会自己生成）。
      */

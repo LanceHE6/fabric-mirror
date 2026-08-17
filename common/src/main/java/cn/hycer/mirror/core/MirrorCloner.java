@@ -82,6 +82,58 @@ public class MirrorCloner {
     }
 
     /**
+     * 仅同步 mods 目录（/mirror sync mod 专用），完整对齐主服 mods/：
+     * 复制+覆盖主服所有 mod 文件，并删除镜像服多余的 mod 文件。
+     * 不复制其它任何内容，不动 server.properties/world/config。
+     */
+    public boolean syncModsOnly() {
+        Path src = mainServerDir.resolve("mods");
+        Path dst = mirrorDir.resolve("mods");
+        if (!Files.exists(src)) {
+            LOGGER.warn("[Cloner] Main mods dir not found: {}", src);
+            return false;
+        }
+        try {
+            Files.createDirectories(dst);
+
+            // 1. 复制/覆盖主服 mods 所有文件
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(src)) {
+                for (Path f : stream) {
+                    if (Files.isDirectory(f)) continue;
+                    try {
+                        Files.copy(f, dst.resolve(f.getFileName().toString()),
+                                StandardCopyOption.REPLACE_EXISTING);
+                    } catch (IOException e) {
+                        // 单文件锁冲突（主服可能正在读取）跳过并继续
+                        LOGGER.warn("[Cloner] Skip locked mod: {}", f.getFileName());
+                    }
+                }
+            }
+
+            // 2. 删除镜像服多余文件（主服已不存在的 mod）
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(dst)) {
+                for (Path f : stream) {
+                    if (Files.isDirectory(f)) continue;
+                    if (!Files.exists(src.resolve(f.getFileName().toString()))) {
+                        try {
+                            Files.deleteIfExists(f);
+                            LOGGER.info("[Cloner] Removed stale mod: {}", f.getFileName());
+                        } catch (IOException e) {
+                            LOGGER.warn("[Cloner] Failed to remove stale mod: {}", f.getFileName());
+                        }
+                    }
+                }
+            }
+
+            LOGGER.info("[Cloner] Mods synced (aligned with main)");
+            return true;
+        } catch (IOException e) {
+            LOGGER.error("[Cloner] Mods sync failed", e);
+            return false;
+        }
+    }
+
+    /**
      * 仅同步 config 目录（/mirror sync config 专用）。
      * 只复制主服 config/ → 镜像服 config/，不复制 jar/mods/versions/libraries/eula，
      * 不重新生成 server.properties，不碰 world。

@@ -43,7 +43,8 @@ public class MirrorCommands {
                     .then(literal("sync")
                             .executes(MirrorCommands::previewSync)
                             .then(literal("map").executes(MirrorCommands::syncMap))
-                            .then(literal("config").executes(MirrorCommands::syncConfig)))
+                            .then(literal("config").executes(MirrorCommands::syncConfig))
+                            .then(literal("mod").executes(MirrorCommands::syncMod)))
                     .then(literal("goto").executes(MirrorCommands::gotoMirror))
                     .then(literal("exec")
                             .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
@@ -167,7 +168,8 @@ public class MirrorCommands {
         ctx.getSource().sendSystemMessage(Component.literal(
                 "§6同步命令：\n" +
                 "§e/mirror sync map §7— 仅同步地图（复制世界文件+热重载）\n" +
-                "§e/mirror sync config §7— 仅同步 config 目录（模组配置，重启镜像服）"));
+                "§e/mirror sync config §7— 仅同步 config 目录（模组配置，重启镜像服）\n" +
+                "§e/mirror sync mod §7— 完整对齐 mods 目录（复制+覆盖+删除多余，重启镜像服）"));
         return 1;
     }
 
@@ -180,6 +182,12 @@ public class MirrorCommands {
     private static int syncConfig(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         WorldSyncManager.syncConfig(src);
+        return 1;
+    }
+
+    private static int syncMod(CommandContext<CommandSourceStack> ctx) {
+        var src = ctx.getSource();
+        WorldSyncManager.syncMod(src);
         return 1;
     }
 
