@@ -22,7 +22,9 @@ import java.nio.file.Path;
  * - mirror_port: 镜像服内网监听端口
  * - mirror_public_address: 镜像服公网地址（Transfer goto 目标，内网穿透填穿透域名）
  * - mirror_public_port: 镜像服公网端口（goto 的 Transfer 目标端口，0=回退 mirror_port）
- * - main_public_address/main_port: 主服公网地址（Transfer return 目标）
+ * - main_public_address: 主服公网地址（Transfer return 目标）
+ * - main_port: 主服本地监听端口
+ * - main_public_port: 主服公网端口（return 的 Transfer 目标端口，0=回退 main_port）
  *
  * 其余 server.properties 项（view-distance、max-players、gamemode 等）
  * 均继承主服配置，不在此重复配置。
@@ -99,6 +101,10 @@ public class MirrorConfig {
     @JsonIgnore
     public int getMainPort() { return mirror.mainPort; }
 
+    /** Main public port for the return Transfer target (0 = fallback to local listen port) */
+    @JsonIgnore
+    public int getMainPublicPort() { return mirror.mainPublicPort > 0 ? mirror.mainPublicPort : mirror.mainPort; }
+
     /** Mirror public port for the goto Transfer target (0 = fallback to local listen port) */
     @JsonIgnore
     public int getMirrorPublicPort() { return mirror.mirrorPublicPort > 0 ? mirror.mirrorPublicPort : mirror.mirrorPort; }
@@ -132,17 +138,21 @@ public class MirrorConfig {
         @JsonProperty("mirror_public_address")
         private String mirrorPublicAddress = "127.0.0.1";
 
+        /** 镜像服公网端口 */
+        @JsonProperty("mirror_public_port")
+        private int mirrorPublicPort = 0;
+
         /** 主服公网地址（Transfer return 目标） */
         @JsonProperty("main_public_address")
         private String mainPublicAddress = "127.0.0.1";
 
-        /** 主服公网端口 */
+        /** 主服本地监听端口 */
         @JsonProperty("main_port")
         private int mainPort = 25565;
 
-        /** Mirror public port (frp-mapped public port used as the goto Transfer target port; 0 = fallback to "port") */
-        @JsonProperty("mirror_public_port")
-        private int mirrorPublicPort = 0;
+        /** 主服公网端口（return 的 Transfer 目标端口，0=回退 main_port） */
+        @JsonProperty("main_public_port")
+        private int mainPublicPort = 0;
 
         /** 首次 /mirror start 时自动克隆主服 */
         @JsonProperty("auto_clone")

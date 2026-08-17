@@ -36,7 +36,7 @@ public class PlayerTransferManager {
     public static boolean transferToMain(ServerPlayer player) {
         MirrorConfig config = MirrorConfig.getInstance();
         String host = config.getMainPublicAddress();
-        int port = config.getMainPort();
+        int port = config.getMainPublicPort();
 
         player.connection.send(new ClientboundTransferPacket(host, port));
         LOGGER.info("[Transfer] {} → main ({}:{})", player.getName().getString(), host, port);
