@@ -17,17 +17,11 @@ public class PlayerTransferManager {
 
     /**
      * 将玩家从主服转移到镜像服。
-     * 发送 Transfer 包，客户端重连到镜像服地址。
-     * - 配置了 mirror_transfer_host 时走代理层（客户端连回主服，主服桥接到镜像服）
-     * - 否则直连镜像服公网地址（mirror_public_address:mirror_public_port）
+     * 发送 Transfer 包，客户端直连镜像服公网地址（mirror_public_address:mirror_public_port）。
      */
     public static boolean transferToMirror(ServerPlayer player) {
         MirrorConfig config = MirrorConfig.getInstance();
-        String host = config.getMirrorTransferHost();
-        if (host == null || host.isEmpty()) {
-            // 未配置 mirror_transfer_host 时直连镜像服公网地址
-            host = config.getPublicAddress();
-        }
+        String host = config.getPublicAddress();
         int port = config.getMirrorPublicPort();
 
         player.connection.send(new ClientboundTransferPacket(host, port));

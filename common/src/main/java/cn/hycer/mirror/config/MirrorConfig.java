@@ -23,7 +23,6 @@ import java.nio.file.Path;
  * - mirror_public_address: 镜像服公网地址（Transfer goto 目标，内网穿透填穿透域名）
  * - mirror_public_port: 镜像服公网端口（goto 的 Transfer 目标端口，0=回退 mirror_port）
  * - main_public_address/main_port: 主服公网地址（Transfer return 目标）
- * - mirror_transfer_host: 镜像服 transfer 地址（代理层 goto 用，留空则直连镜像服公网地址）
  *
  * 其余 server.properties 项（view-distance、max-players、gamemode 等）
  * 均继承主服配置，不在此重复配置。
@@ -100,10 +99,6 @@ public class MirrorConfig {
     @JsonIgnore
     public int getMainPort() { return mirror.mainPort; }
 
-    /** 镜像服 transfer 地址（goto 时 Transfer 目标，A 记录指向主服公网入口，用于主服识别 goto） */
-    @JsonIgnore
-    public String getMirrorTransferHost() { return mirror.mirrorTransferHost; }
-
     /** Mirror public port for the goto Transfer target (0 = fallback to local listen port) */
     @JsonIgnore
     public int getMirrorPublicPort() { return mirror.mirrorPublicPort > 0 ? mirror.mirrorPublicPort : mirror.mirrorPort; }
@@ -144,10 +139,6 @@ public class MirrorConfig {
         /** 主服公网端口 */
         @JsonProperty("main_port")
         private int mainPort = 25565;
-
-        /** 镜像服 transfer 地址（goto 时 Transfer 目标，A 记录指向主服公网入口） */
-        @JsonProperty("mirror_transfer_host")
-        private String mirrorTransferHost = "";
 
         /** Mirror public port (frp-mapped public port used as the goto Transfer target port; 0 = fallback to "port") */
         @JsonProperty("mirror_public_port")
