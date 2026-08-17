@@ -145,7 +145,7 @@ public class MirrorCommands {
         ctx.getSource().sendSystemMessage(Component.literal(
                 "§6同步命令：\n" +
                 "§e/mirror sync map §7— 仅同步地图（复制世界文件+热重载）\n" +
-                "§e/mirror sync config §7— 同步配置/模组（重启镜像服）"));
+                "§e/mirror sync config §7— 仅同步 config 目录（模组配置，重启镜像服）"));
         return 1;
     }
 

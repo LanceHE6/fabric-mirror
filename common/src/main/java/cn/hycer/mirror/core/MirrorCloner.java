@@ -31,6 +31,27 @@ public class MirrorCloner {
     public Path getMirrorDir() { return mirrorDir; }
 
     /**
+     * 仅同步 config 目录（/mirror sync config 专用）。
+     * 只复制主服 config/ → 镜像服 config/，不复制 jar/mods/versions/libraries/eula，
+     * 不重新生成 server.properties，不碰 world。
+     */
+    public boolean syncConfigOnly() {
+        try {
+            Path src = mainServerDir.resolve("config");
+            if (!Files.exists(src)) {
+                LOGGER.warn("[Cloner] Main config dir not found: {}", src);
+                return false;
+            }
+            copyDirIfExists(src, mirrorDir.resolve("config"));
+            LOGGER.info("[Cloner] Config synced (config only)");
+            return true;
+        } catch (IOException e) {
+            LOGGER.error("[Cloner] Config sync failed", e);
+            return false;
+        }
+    }
+
+    /**
      * 判断镜像服目录是否已克隆过（存在核心 jar 且存在 eula.txt）。
      */
     public boolean isCloned() {
