@@ -39,9 +39,20 @@ public class MirrorInstanceManager {
      * 启动镜像服（首次自动克隆）。
      */
     public boolean start() {
+        return start(null, null);
+    }
+
+    /**
+     * 启动镜像服（首次自动克隆）。
+     *
+     * @param onReady 镜像服 MC 启动完成（Done）后回调
+     * @param onFail  启动失败（克隆失败或进程退出但未 Done）后回调
+     */
+    public boolean start(Runnable onReady, Runnable onFail) {
         MirrorConfig config = MirrorConfig.getInstance();
         if (cloner == null) {
             LOGGER.error("[Mirror] Not initialized");
+            if (onFail != null) onFail.run();
             return false;
         }
 
@@ -50,6 +61,7 @@ public class MirrorInstanceManager {
             LOGGER.info("[Mirror] First start, cloning main server...");
             if (!cloner.cloneServer()) {
                 LOGGER.error("[Mirror] Clone failed");
+                if (onFail != null) onFail.run();
                 return false;
             }
         }
@@ -57,7 +69,12 @@ public class MirrorInstanceManager {
         if (process == null) {
             process = new MirrorProcess(cloner.getMirrorDir(), config);
         }
+        process.setReadyCallback(onReady);
+        process.setFailCallback(onFail);
         boolean ok = process.start();
+        if (!ok && onFail != null) {
+            onFail.run();
+        }
         started = ok;
         return ok;
     }

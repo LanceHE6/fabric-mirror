@@ -82,10 +82,15 @@ public class MirrorCommands {
         }
 
         src.sendSystemMessage(Component.literal("§6正在启动镜像实例..."));
+        var server = src.getServer();
         new Thread(() -> {
-            boolean ok = mgr.start();
-            src.sendSystemMessage(ok ? Component.literal("§a镜像实例启动成功！")
-                    : Component.literal("§c镜像实例启动失败，查看日志。"));
+            // 启动完成（Done）后提示成功，失败则提示失败
+            mgr.start(
+                    () -> server.execute(() ->
+                            src.sendSystemMessage(Component.literal("§a镜像实例启动完成！"))),
+                    () -> server.execute(() ->
+                            src.sendSystemMessage(Component.literal("§c镜像实例启动失败，查看日志。")))
+            );
         }, "Mirror-Start-Thread").start();
         return 1;
     }

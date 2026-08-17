@@ -39,6 +39,12 @@ public class MirrorProcess {
     /** 停止完成回调（镜像服进程退出后触发） */
     private volatile Runnable stopCallback;
 
+    /** 启动完成回调（Done 信号触发） */
+    private volatile Runnable readyCallback;
+
+    /** 启动失败回调（进程退出但未 Done 时触发） */
+    private volatile Runnable failCallback;
+
     public MirrorProcess(Path mirrorDir, MirrorConfig config) {
         this.mirrorDir = mirrorDir;
         this.config = config;
@@ -50,6 +56,8 @@ public class MirrorProcess {
     public boolean isReady() { return ready.get(); }
     public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
     public void setStopCallback(Runnable cb) { this.stopCallback = cb; }
+    public void setReadyCallback(Runnable cb) { this.readyCallback = cb; }
+    public void setFailCallback(Runnable cb) { this.failCallback = cb; }
 
     /**
      * 启动镜像服进程。
@@ -223,6 +231,11 @@ public class MirrorProcess {
                 if (line.contains("Done (")) {
                     ready.set(true);
                     LOGGER.info("[Process] Mirror server is ready");
+                    Runnable cb = readyCallback;
+                    if (cb != null) {
+                        readyCallback = null;
+                        cb.run();
+                    }
                 }
                 // 只转发关键事件，避免镜像服日志刷屏污染主服控制台。
                 // 镜像服完整日志由自身写入 mirror/logs/latest.log。
@@ -234,10 +247,20 @@ public class MirrorProcess {
             }
         } catch (IOException ignored) {
         } finally {
+            boolean wasReady = ready.get();
             running.set(false);
             ready.set(false);
             if (state.get() != State.STOPPING && state.get() != State.STOPPED) {
                 state.set(State.ERROR);
+                // 进程退出但从未 Done，视为启动失败
+                if (!wasReady) {
+                    LOGGER.warn("[Process] Mirror process exited before ready");
+                    Runnable cb = failCallback;
+                    if (cb != null) {
+                        failCallback = null;
+                        cb.run();
+                    }
+                }
                 LOGGER.warn("[Process] Mirror process output stream closed");
             }
         }

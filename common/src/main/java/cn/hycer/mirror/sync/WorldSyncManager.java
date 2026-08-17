@@ -69,11 +69,14 @@ public class WorldSyncManager {
                     src.sendSystemMessage(Component.literal("§a地图同步完成！(§e"
                             + (bytes / 1024 / 1024) + " MB§a)"));
 
-                    // 3. 重启镜像服
+                    // 3. 重启镜像服（等 Done 后提示完成）
                     src.sendSystemMessage(Component.literal("§7重启镜像服..."));
-                    boolean ok = mgr.start();
-                    src.sendSystemMessage(ok ? Component.literal("§a镜像服已重启！")
-                            : Component.literal("§c镜像服重启失败，查看日志。"));
+                    mgr.start(
+                            () -> server.execute(() ->
+                                    src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                            () -> server.execute(() ->
+                                    src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。")))
+                    );
                 } finally {
                     // 恢复主服自动保存
                     server.execute(() -> server.setAutoSave(true));
@@ -100,6 +103,7 @@ public class WorldSyncManager {
         src.sendSystemMessage(Component.literal("§6正在同步配置..."));
 
         new Thread(() -> {
+            var server = src.getServer();
             try {
                 if (mgr.isRunning()) {
                     mgr.stopAndWait();
@@ -111,9 +115,13 @@ public class WorldSyncManager {
                     return;
                 }
                 src.sendSystemMessage(Component.literal("§a配置已同步，重启镜像服..."));
-                boolean ok = mgr.start();
-                src.sendSystemMessage(ok ? Component.literal("§a镜像服已重启！")
-                        : Component.literal("§c镜像服重启失败，查看日志。"));
+                // 等 Done 后提示重启完成
+                mgr.start(
+                        () -> server.execute(() ->
+                                src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                        () -> server.execute(() ->
+                                src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。")))
+                );
             } catch (Exception e) {
                 LOGGER.error("[Sync] Config sync failed", e);
                 src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
