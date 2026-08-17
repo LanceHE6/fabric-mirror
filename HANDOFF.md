@@ -97,9 +97,10 @@ common/src/main/java/cn/hycer/mirror/
 {
   "mirror": {
     "enabled": true,
-    "dir": "mirror",
-    "port": 25566,
-    "public_address": "127.0.0.1",
+    "mirror_dir": "mirror",
+    "mirror_port": 25566,
+    "mirror_public_address": "127.0.0.1",
+    "mirror_public_port": 25566,
     "main_public_address": "127.0.0.1",
     "main_port": 25565,
     "mirror_transfer_host": "",
@@ -110,18 +111,20 @@ common/src/main/java/cn/hycer/mirror/
 
 | 字段 | 说明 |
 |------|------|
-| `dir` | 镜像服根目录（相对主服运行目录） |
-| `port` | 镜像服内网监听端口（桥接目标 127.0.0.1:port） |
-| `public_address` | 旧方案的镜像服公网地址（代理层下仅作 fallback） |
+| `mirror_dir` | 镜像服根目录（相对主服运行目录） |
+| `mirror_port` | 镜像服内网监听端口（代理层桥接目标 127.0.0.1:mirror_port） |
+| `mirror_public_address` | 镜像服公网地址（直连方案 goto 的 Transfer 目标） |
+| `mirror_public_port` | 镜像服公网端口（goto 的 Transfer 目标端口，0=回退 mirror_port） |
 | `main_public_address` | 主服公网地址（return 的 Transfer 目标） |
 | `main_port` | 主服公网端口 |
-| `mirror_transfer_host` | **代理层 goto 的 Transfer 目标 host**（A 记录指向主服公网入口，用于主服识别 goto） |
+| `mirror_transfer_host` | 代理层 goto 的 Transfer 目标 host（A 记录指向主服公网入口，留空则直连镜像服） |
 | `auto_clone` | 首次 /mirror start 自动克隆 |
 
-**本地测试配置**（区分 goto/return 需两个不同 hostName 指向同一地址）：
+**本地测试配置**（直连方案，区分 goto/return 需两个不同 hostName 指向同一地址）：
 ```json
 {
-  "mirror_transfer_host": "localhost",
+  "mirror_public_address": "127.0.0.1",
+  "mirror_public_port": 25566,
   "main_public_address": "127.0.0.1",
   "main_port": 25565
 }

@@ -18,10 +18,12 @@ import java.nio.file.Path;
  * Mirror 主配置，对应 config/mirror/mirror.json
  *
  * 独立进程镜像服方案，仅保留必要的控制配置：
- * - dir: 镜像服根目录（相对主服运行目录）
- * - port: 镜像服监听端口
- * - public_address: 镜像服公网地址（Transfer goto 目标）
+ * - mirror_dir: 镜像服根目录（相对主服运行目录）
+ * - mirror_port: 镜像服内网监听端口
+ * - mirror_public_address: 镜像服公网地址（Transfer goto 目标，内网穿透填穿透域名）
+ * - mirror_public_port: 镜像服公网端口（goto 的 Transfer 目标端口，0=回退 mirror_port）
  * - main_public_address/main_port: 主服公网地址（Transfer return 目标）
+ * - mirror_transfer_host: 镜像服 transfer 地址（代理层 goto 用，留空则直连镜像服公网地址）
  *
  * 其余 server.properties 项（view-distance、max-players、gamemode 等）
  * 均继承主服配置，不在此重复配置。
@@ -84,13 +86,13 @@ public class MirrorConfig {
     public boolean isEnabled() { return mirror.enabled; }
 
     @JsonIgnore
-    public String getMirrorDir() { return mirror.dir; }
+    public String getMirrorDir() { return mirror.mirrorDir; }
 
     @JsonIgnore
-    public int getPort() { return mirror.port; }
+    public int getPort() { return mirror.mirrorPort; }
 
     @JsonIgnore
-    public String getPublicAddress() { return mirror.publicAddress; }
+    public String getPublicAddress() { return mirror.mirrorPublicAddress; }
 
     @JsonIgnore
     public String getMainPublicAddress() { return mirror.mainPublicAddress; }
@@ -104,7 +106,7 @@ public class MirrorConfig {
 
     /** Mirror public port for the goto Transfer target (0 = fallback to local listen port) */
     @JsonIgnore
-    public int getMirrorPublicPort() { return mirror.mirrorPublicPort > 0 ? mirror.mirrorPublicPort : mirror.port; }
+    public int getMirrorPublicPort() { return mirror.mirrorPublicPort > 0 ? mirror.mirrorPublicPort : mirror.mirrorPort; }
 
     @JsonIgnore
     public boolean isAutoClone() { return mirror.autoClone; }
@@ -124,16 +126,16 @@ public class MirrorConfig {
         private boolean enabled = true;
 
         /** 镜像服根目录（相对主服运行目录） */
-        @JsonProperty("dir")
-        private String dir = "mirror";
+        @JsonProperty("mirror_dir")
+        private String mirrorDir = "mirror";
 
         /** 镜像服监听端口 */
-        @JsonProperty("port")
-        private int port = 25566;
+        @JsonProperty("mirror_port")
+        private int mirrorPort = 25566;
 
         /** 镜像服公网地址（Transfer goto 目标，内网穿透填穿透域名） */
-        @JsonProperty("public_address")
-        private String publicAddress = "127.0.0.1";
+        @JsonProperty("mirror_public_address")
+        private String mirrorPublicAddress = "127.0.0.1";
 
         /** 主服公网地址（Transfer return 目标） */
         @JsonProperty("main_public_address")
