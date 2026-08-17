@@ -38,11 +38,23 @@ public class MirrorCloner {
     }
 
     /**
-     * 执行克隆。
+     * 执行克隆（不复制世界）。
      * 复制：server 核心 jar、mods/、config/、eula.txt
      * 生成：镜像服 server.properties（改端口、改 level-name）
      */
     public boolean cloneServer() {
+        return cloneServer(false);
+    }
+
+    /**
+     * 执行克隆。
+     *
+     * @param includeWorld 是否连主服世界一起复制（首次克隆应传 true，
+     *                     否则镜像服启动时生成空白世界；sync config 传 false 保持不碰世界）
+     * 复制：server 核心 jar、mods/、config/、eula.txt（includeWorld=true 时含 world/）
+     * 生成：镜像服 server.properties（改端口、改 level-name）
+     */
+    public boolean cloneServer(boolean includeWorld) {
         try {
             LOGGER.info("[Cloner] Cloning main server → {}", mirrorDir);
             Files.createDirectories(mirrorDir);
@@ -83,6 +95,12 @@ public class MirrorCloner {
                 Files.writeString(mirrorDir.resolve("eula.txt"), "eula=true\n");
             }
 
+            // 5.1 连世界一起复制（首次克隆）
+            // 注意：调用方需先 saveEverything + 暂停主服自动保存，否则复制到的是内存中未落盘的旧世界
+            if (includeWorld) {
+                copyWorld(mainServerDir.resolve("world"), mirrorDir.resolve("world"));
+            }
+
             // 6. 生成镜像服 server.properties
             generateMirrorServerProperties();
 
@@ -113,6 +131,9 @@ public class MirrorCloner {
         lines = replaceOrAdd(lines, "level-name", "world");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
         lines = replaceOrAdd(lines, "accepts-transfers", "true");
+        // 镜像服关闭 RCON：克隆会继承主服的 enable-rcon/rcon.port 设置，
+        // 若主服开启了 RCON，镜像服会尝试绑定同一端口导致 BindException（非致命但日志报错）
+        lines = replaceOrAdd(lines, "enable-rcon", "false");
         // 在线模式：镜像服继承主服的 online-mode / enforce-secure-profile（不覆盖，保持在线认证）。
         // 压缩暂禁用，避免字节透传下 setupCompression 时序问题（后续可恢复测试）。
         lines = replaceOrAdd(lines, "network-compression-threshold", "-1");
@@ -156,6 +177,43 @@ public class MirrorCloner {
             }
         });
         LOGGER.info("[Cloner] Copied {}", src.getFileName());
+    }
+
+    /**
+     * 复制主服世界到镜像服。
+     * 跳过 session.lock（主服 DirectoryLock 独占锁定，镜像服启动时会自己生成）；
+     * 单文件被锁/写入中则跳过并记录，避免整个克隆失败。
+     */
+    private static void copyWorld(Path src, Path dst) throws IOException {
+        if (!Files.exists(src)) {
+            LOGGER.info("[Cloner] No world to copy, mirror will generate a fresh world");
+            return;
+        }
+        long[] total = {0};
+        Files.walkFileTree(src, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                Path target = dst.resolve(src.relativize(dir).toString());
+                Files.createDirectories(target);
+                return FileVisitResult.CONTINUE;
+            }
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (file.getFileName().toString().equals("session.lock")) {
+                    return FileVisitResult.CONTINUE;
+                }
+                Path target = dst.resolve(src.relativize(file).toString());
+                try {
+                    Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
+                    total[0] += Files.size(file);
+                } catch (IOException e) {
+                    // 主服正在写该文件（锁冲突），跳过并继续
+                    LOGGER.warn("[Cloner] Skip locked file: {}", file.getFileName());
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        LOGGER.info("[Cloner] Copied world ({} MB)", total[0] / 1024 / 1024);
     }
 
     /**

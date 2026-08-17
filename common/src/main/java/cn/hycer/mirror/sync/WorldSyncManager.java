@@ -108,8 +108,8 @@ public class WorldSyncManager {
                 if (mgr.isRunning()) {
                     mgr.stopAndWait();
                 }
-                // 重新克隆（覆盖 mods/config/server.properties）
-                boolean cloned = cloner.cloneServer();
+                // 重新克隆（覆盖 mods/config/server.properties/jar 等，但不碰 world —— 世界同步走 /mirror sync map）
+                boolean cloned = cloner.cloneServer(false);
                 if (!cloned) {
                     src.sendSystemMessage(Component.literal("§c配置同步失败。"));
                     return;
