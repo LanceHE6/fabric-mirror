@@ -33,6 +33,9 @@ public class MirrorCommands {
                     .then(literal("stop")
                             .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
                             .executes(MirrorCommands::stopMirror))
+                    .then(literal("restart")
+                            .requires(src -> Commands.LEVEL_GAMEMASTERS.check(src.permissions()))
+                            .executes(MirrorCommands::restartMirror))
                     .then(literal("sync")
                             .executes(MirrorCommands::previewSync)
                             .then(literal("map").executes(MirrorCommands::syncMap))
@@ -110,6 +113,31 @@ public class MirrorCommands {
         mgr.stop(() -> server.execute(() ->
                 src.sendSystemMessage(Component.literal("§a镜像实例已停止。"))));
         src.sendSystemMessage(Component.literal("§7已发送停止指令，镜像实例正在后台关闭..."));
+        return 1;
+    }
+
+    private static int restartMirror(CommandContext<CommandSourceStack> ctx) {
+        var src = ctx.getSource();
+        var mgr = MirrorInstanceManager.getInstance();
+
+        if (!mgr.isRunning()) {
+            src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
+            return 0;
+        }
+
+        src.sendSystemMessage(Component.literal("§6正在重启镜像实例..."));
+        var server = src.getServer();
+        new Thread(() -> {
+            // 同步停止（等待进程真正退出，避免端口未释放就启动新进程）
+            mgr.stopAndWait();
+            // 启动（等镜像服 Done 后提示完成）
+            mgr.start(
+                    () -> server.execute(() ->
+                            src.sendSystemMessage(Component.literal("§a镜像实例重启完成！"))),
+                    () -> server.execute(() ->
+                            src.sendSystemMessage(Component.literal("§c镜像实例重启失败，查看日志。")))
+            );
+        }, "Mirror-Restart-Thread").start();
         return 1;
     }
 
