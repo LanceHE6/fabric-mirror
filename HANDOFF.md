@@ -6,7 +6,18 @@
 
 ## 1. 项目概述
 
-**项目**：mirror —— 一个 Fabric MC 26.2 服务端模组（mod_id=`mirror`，包名 `cn.hycer.mirror`）。
+**项目**：mirror —— 一个 Fabric MC 服务端模组（mod_id=`mirror`，包名 `cn.hycer.mirror`）。
+现在支持 **26.2 / 26.3 两个版本**：共享 `common/`，每版本一个 `mc-<ver>/` 子模块。
+
+**当前版本支持**：
+
+| 子模块 | Minecraft | Fabric Loader | Fabric API | 产物 |
+|--------|-----------|---------------|------------|------|
+| `mc-26.3` | 26.3 | 0.19.5 | 0.160.7+26.3 | `dist/mirror-mc26.3-<ver>.jar` |
+| `mc-26.2` | 26.2 | 0.19.3 | 0.154.0+26.2 | `dist/mirror-mc26.2-<ver>.jar` |
+
+构建：`./gradlew buildAll`（全部）或 `./gradlew :mc-26.3:build`（单版本）。
+26.3 适配注意：Mixin 目标 `ServerLoginPacketListenerImpl.handleHello` 26.2→26.3 字节码完全一致（无需改 mixin）；
 
 **目标**：在主服之外提供一个"镜像服"，玩家在游戏中通过 `/mirror goto` / `/mirror return` 无缝切换主服和镜像服：
 - 玩家**无需手动断开重连**（Transfer 包自动切换）
@@ -200,21 +211,23 @@ cd /home/hml/code/mirror/MCCC
 ## 8. 编译/运行命令
 
 ```bash
-# 编译
-cd /home/hml/code/mirror
+# 编译（当前开发机：/home/hycer/code/fabric-mirror）
+cd /home/hycer/code/fabric-mirror
 export JAVA_HOME=/opt/jdk-25
-./gradlew build --no-daemon
+./gradlew buildAll --no-daemon          # 全部版本 → dist/
+./gradlew :mc-26.3:compileJava --no-daemon   # 只编 26.3，fail fast
 
 # 产物
-ls mc-26.2/build/libs/mirror-mc26.2-0.2.0-Alpha.jar
+ls dist/mirror-mc26.3-0.2.0-Alpha.jar
 
-# 复制到测试环境
-cp mc-26.2/build/libs/mirror-mc26.2-0.2.0-Alpha.jar MCCC/mods/
-
-# 启动主服（本地测试）
-cd /home/hml/code/mirror/MCCC
-/opt/jdk-25/bin/java -Xmx2G -jar fabric-server-launch.jar nogui
+# 复制到测试环境（26.3 主服）
+cp dist/mirror-mc26.3-0.2.0-Alpha.jar <主服目录>/mods/
 ```
+
+> 注意：`maven.fabricmc.net` 偶发 TLS handshake 失败（机房出口抖动）。
+> Gradle 默认 HTTP 重试只有 3 次，常在**配置阶段**（拉 loom 元数据）就失败。
+> 加长超时再试即可：`-Dorg.gradle.internal.http.connectionTimeout=60000
+> -Dorg.gradle.internal.http.socketTimeout=60000`。
 
 **测试后务必清理**：pkill 服务端进程 + 删除 session.lock。
 
@@ -222,15 +235,37 @@ cd /home/hml/code/mirror/MCCC
 
 ## 9. 环境信息
 
-- JDK 25：`/opt/jdk-25`（默认 java 是 JDK 21，必须显式指定）
-- MC 26.2 映射：Yarn v2（intermediary 名）
-- 反编译查 API：`/opt/jdk-25/bin/javap -p -c -classpath <minecraft-server-deobf.jar> <类名>`
-- minecraft jar：`~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-server-deobf/26.2/minecraft-server-deobf-26.2.jar`
+- JDK 25：`/opt/jdk-25`（`JAVA_HOME` 里默认的 current-jdk 是 21，必须显式指定 25）
+- MC 26.3 映射：Yarn v2（intermediary 名）
+- 反编译查 API：`/opt/jdk-25/bin/javap -p -c -classpath <deobf.jar> <类名>`
+- loom 反混淆 jar（服务端 common 类都在这个里）：
+  `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-common-deobf/26.3/minecraft-common-deobf-26.3.jar`
 - 玩家测试账号：summer_37（UUID: f0737c77-86be-48a7-951b-11f3df1fb69a）
+
+### 本地端到端测试（不碰线上服）
+
+用 `$HERMES_HOME/cache/scratch/mirror-e2e/server/` 建一个临时主服：
+从 `mcserver/mcdr_26.3/server` 拷 `fabric-server-launch.jar`、`fabric-server-launcher.properties`、
+`server.jar`、`libraries/`、`versions/`、`.fabric/`、`mods/`、`eula.txt`、`server.properties`
+（改 `server-port=25565`、`enable-rcon=false`、`query.port` 注意冲突），把待测 jar 丢进 `mods/`，
+用 `screen` 起服（`/opt/jdk-25/bin/java`），然后往 screen 里 `stuff "mirror start\n"` 等命令，
+读 `console.log` / `mirror/logs/latest.log` 验证。测完 `stop` + 删临时目录。
 
 ---
 
 ## 10. 待办清单
 
+- [x] 26.3 适配（2026-10-08：新增 `mc-26.3` 子模块，编译 + 端到端实测通过）
 - [ ] 生产环境地址配置确认（用户内网穿透 + SRV 场景，已实测通过，待整理最终配置）
-- [ ] 镜像服离线模式玩家验证（MirrorOfflineProfileMixin）实测确认
+- [ ] 镜像服离线模式玩家验证（MirrorOfflineProfileMixin）实测确认（`handleHello` 在 26.3 字节码未变）
+
+### 26.3 实测记录（本地临时主服，2026-10-08）
+
+- 主服 26.3 加载 mod 正常，`[Mirror] Mirror mod initialized (main side)`，无 mixin 报错
+- `/mirror start` → 克隆 + 拉起镜像子进程，子日志 `Starting minecraft server version 26.3` + `Done`，
+  `Running as MIRROR instance (only /mirror return)`，子进程日志 0 个 ERROR
+- `/mirror exec list`、`/mirror sync mod`（停→换 jar→重启→Done）、`/mirror sync map`、`/mirror stop` 全通
+- 修复 1：镜像服 `query.port` 继承主服 → GS4 UDP 端口撞车 `BindException`（旧版就有，非 26.3 引入）。
+  现在克隆生成的 `server.properties` 会把 `query.port` 设为 `mirror_port`，已复测无 BindException。
+- `/mirror goto` / `/mirror return` 未测（需要真实客户端 Transfer，本地无客户端）。
+  代码路径与 26.2 完全一致：`ClientboundTransferPacket(String,int)` 在 26.3 签名未变。

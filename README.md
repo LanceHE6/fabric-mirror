@@ -25,8 +25,8 @@
 
 ```bash
 export JAVA_HOME=/opt/jdk-25
-./gradlew build
-# JAR: mc-26.2/build/libs/mirror-mc26.2-0.2.0-Alpha.jar
+./gradlew buildAll            # 构建全部版本并收集到 dist/
+# JAR: dist/mirror-mc26.3-0.2.0-Alpha.jar（单版本：./gradlew :mc-26.3:build）
 ```
 
 ### 安装
@@ -152,14 +152,17 @@ common/src/main/java/cn/hycer/mirror/
 
 ## 构建环境
 
-| 组件 | 版本 |
-|------|------|
-| Minecraft | 26.2 |
-| Fabric Loader | 0.19.3 |
-| Fabric API | 0.154.0+26.2 |
-| Fabric Loom | 1.17.x |
-| Gradle | 9.5.0 |
-| JDK | 25 |
+| 组件 | mc-26.2 | mc-26.3 |
+|------|---------|---------|
+| Minecraft | 26.2 | 26.3 |
+| Fabric Loader | 0.19.3 | 0.19.5 |
+| Fabric API | 0.154.0+26.2 | 0.160.7+26.3 |
+| Fabric Loom | 1.17.x | 1.17.x |
+| Gradle | 9.5.0 | 9.5.0 |
+| JDK | 25 | 25 |
+
+> 镜像服是独立进程，启动时使用**主服自己的 server.jar**（克隆复制），
+> 所以 mod 版本必须与主服 MC 版本一致：26.2 主服配 `mirror-mc26.2`，26.3 主服配 `mirror-mc26.3`。
 
 ## 发布
 

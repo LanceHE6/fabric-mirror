@@ -255,6 +255,10 @@ public class MirrorCloner {
         lines = replaceOrAdd(lines, "level-name", "world");
         lines = replaceOrAdd(lines, "server-ip", ""); // 监听所有地址
         lines = replaceOrAdd(lines, "accepts-transfers", "true");
+        // 查询端口（GS4，UDP）：镜像服与主服跑在同一台机器上，若沿用主服的 query.port
+        // 会与主服查询监听撞端口，镜像服启动时报 BindException（非致命但会刷日志）。
+        // 镜像服查询端口跟随 mirror_port，保证 UDP 端口不冲突。
+        lines = replaceOrAdd(lines, "query.port", String.valueOf(config.getPort()));
         // 镜像服关闭 RCON：克隆会继承主服的 enable-rcon/rcon.port 设置，
         // 若主服开启了 RCON，镜像服会尝试绑定同一端口导致 BindException（非致命但日志报错）
         lines = replaceOrAdd(lines, "enable-rcon", "false");

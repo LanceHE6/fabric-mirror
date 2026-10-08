@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "mirror",
+  "version": "${version}",
+  "name": "Mirror",
+  "description": "Fabric 独立进程镜像服 - 主服通过模组克隆并控制一个独立的镜像服务端实例",
+  "authors": ["LanceHE6"],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      "cn.hycer.mirror.Mirror"
+    ]
+  },
+  "mixins": [
+    "mirror.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "26.3"
+  }
+}

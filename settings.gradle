@@ -13,4 +13,5 @@ plugins {
 
 rootProject.name = 'mirror'
 
+include 'mc-26.3'
 include 'mc-26.2'
