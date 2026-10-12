@@ -25,6 +25,10 @@ public class MirrorCommands {
 
     private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger("mirror");
 
+    public static Component msg(String text) {
+        return Component.literal("§8[§bMirror§8] " + text);
+    }
+
     /** 主服侧指令注册 */
     public static void registerMainSide() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
@@ -83,8 +87,11 @@ public class MirrorCommands {
         var src = ctx.getSource();
         var mgr = MirrorInstanceManager.getInstance();
         var state = mgr.getState();
-        src.sendSystemMessage(Component.literal("§6===== Mirror 镜像实例状态 ====="));
-        src.sendSystemMessage(Component.literal("  状态: §e" + stateLabel(state)));
+        src.sendSystemMessage(msg("§6===== 镜像实例状态 ====="));
+        src.sendSystemMessage(msg("  状态: §e" + stateLabel(state)));
+        if (state == MirrorProcess.State.ERROR) {
+            src.sendSystemMessage(msg("§c提示: 镜像实例处于异常退出状态，可执行 §e/mirror start §c重新启动，或执行 §e/mirror stop §c重置状态。"));
+        }
         return 1;
     }
 
@@ -94,7 +101,7 @@ public class MirrorCommands {
             case STARTING -> "启动中";
             case RUNNING -> "运行中";
             case STOPPING -> "停止中";
-            case ERROR -> "错误";
+            case ERROR -> "错误 (异常退出)";
         };
     }
 
@@ -103,19 +110,19 @@ public class MirrorCommands {
         var mgr = MirrorInstanceManager.getInstance();
 
         if (mgr.isRunning()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例已在运行。"));
+            src.sendSystemMessage(msg("§c镜像实例已在运行。"));
             return 0;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在启动镜像实例..."));
+        src.sendSystemMessage(msg("§6正在启动镜像实例..."));
         var server = src.getServer();
         new Thread(() -> {
             // 启动完成（Done）后提示成功，失败则提示失败
             mgr.start(
                     () -> server.execute(() ->
-                            src.sendSystemMessage(Component.literal("§a镜像实例启动完成！"))),
+                            src.sendSystemMessage(msg("§a镜像实例启动完成！"))),
                     () -> server.execute(() ->
-                            src.sendSystemMessage(Component.literal("§c镜像实例启动失败，查看日志。")))
+                            src.sendSystemMessage(msg("§c镜像实例启动失败，请检查日志。")))
             );
         }, "Mirror-Start-Thread").start();
         return 1;
@@ -125,17 +132,17 @@ public class MirrorCommands {
         var src = ctx.getSource();
         var mgr = MirrorInstanceManager.getInstance();
 
-        if (!mgr.isRunning()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。"));
+        if (!mgr.isRunning() && mgr.getState() != MirrorProcess.State.ERROR) {
+            src.sendSystemMessage(msg("§c镜像实例未运行。"));
             return 0;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在停止镜像实例..."));
+        src.sendSystemMessage(msg("§6正在停止镜像实例..."));
         var server = src.getServer();
         // 进程退出后，通过 server.execute 调度回主线程发送完成提示
         mgr.stop(() -> server.execute(() ->
-                src.sendSystemMessage(Component.literal("§a镜像实例已停止。"))));
-        src.sendSystemMessage(Component.literal("§7已发送停止指令，镜像实例正在后台关闭..."));
+                src.sendSystemMessage(msg("§a镜像实例已停止。"))));
+        src.sendSystemMessage(msg("§7已发送停止指令，镜像实例正在后台关闭..."));
         return 1;
     }
 
@@ -143,12 +150,12 @@ public class MirrorCommands {
         var src = ctx.getSource();
         var mgr = MirrorInstanceManager.getInstance();
 
-        if (!mgr.isRunning()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
+        if (!mgr.isRunning() && mgr.getState() != MirrorProcess.State.ERROR) {
+            src.sendSystemMessage(msg("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在重启镜像实例..."));
+        src.sendSystemMessage(msg("§6正在重启镜像实例..."));
         var server = src.getServer();
         new Thread(() -> {
             // 同步停止（等待进程真正退出，避免端口未释放就启动新进程）
@@ -156,20 +163,20 @@ public class MirrorCommands {
             // 启动（等镜像服 Done 后提示完成）
             mgr.start(
                     () -> server.execute(() ->
-                            src.sendSystemMessage(Component.literal("§a镜像实例重启完成！"))),
+                            src.sendSystemMessage(msg("§a镜像实例重启完成！"))),
                     () -> server.execute(() ->
-                            src.sendSystemMessage(Component.literal("§c镜像实例重启失败，查看日志。")))
+                            src.sendSystemMessage(msg("§c镜像实例重启失败，请检查日志。")))
             );
         }, "Mirror-Restart-Thread").start();
         return 1;
     }
 
     private static int previewSync(CommandContext<CommandSourceStack> ctx) {
-        ctx.getSource().sendSystemMessage(Component.literal(
+        ctx.getSource().sendSystemMessage(msg(
                 "§6同步命令：\n" +
-                "§e/mirror sync map §7— 仅同步地图（复制世界文件+热重载）\n" +
-                "§e/mirror sync config §7— 仅同步 config 目录（模组配置，重启镜像服）\n" +
-                "§e/mirror sync mod §7— 完整对齐 mods 目录（复制+覆盖+删除多余，重启镜像服）"));
+                "  §e/mirror sync map §7— 仅同步地图（复制世界文件+热重载）\n" +
+                "  §e/mirror sync config §7— 仅同步 config 目录（模组配置，重启镜像服）\n" +
+                "  §e/mirror sync mod §7— 完整对齐 mods 目录（复制+覆盖+删除多余，重启镜像服）"));
         return 1;
     }
 
@@ -194,16 +201,16 @@ public class MirrorCommands {
     private static int gotoMirror(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         if (!(src.getEntity() instanceof ServerPlayer player)) {
-            src.sendSystemMessage(Component.literal("§c此命令只能由玩家执行。"));
+            src.sendSystemMessage(msg("§c此命令只能由玩家执行。"));
             return 0;
         }
         var mgr = MirrorInstanceManager.getInstance();
         if (!mgr.isRunning()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
+            src.sendSystemMessage(msg("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
         if (!mgr.isReady()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例正在启动中，请稍后再试。"));
+            src.sendSystemMessage(msg("§c镜像实例正在启动中，请稍后再试。"));
             return 0;
         }
         PlayerTransferManager.transferToMirror(player);
@@ -216,12 +223,12 @@ public class MirrorCommands {
         var mgr = MirrorInstanceManager.getInstance();
 
         if (!mgr.isRunning()) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未运行。请先 /mirror start"));
+            src.sendSystemMessage(msg("§c镜像实例未运行。请先 /mirror start"));
             return 0;
         }
         var proc = mgr.getProcess();
         if (proc == null) {
-            src.sendSystemMessage(Component.literal("§c镜像进程不可用。"));
+            src.sendSystemMessage(msg("§c镜像进程不可用。"));
             return 0;
         }
 
@@ -232,22 +239,22 @@ public class MirrorCommands {
         proc.captureOutput(timeoutMs, lines -> server.execute(() -> {
             if (lines.isEmpty()) {
                 LOGGER.info("[Exec] /{} -> no output", cmd);
-                src.sendSystemMessage(Component.literal("§7(mirror) §e/" + cmd + "§7: 无输出"));
+                src.sendSystemMessage(msg("§7(mirror) §e/" + cmd + "§7: 无输出"));
                 return;
             }
             LOGGER.info("[Exec] /{} -> {}", cmd, String.join(" | ", lines));
-            src.sendSystemMessage(Component.literal("§7---- §e/" + cmd + " §7----"));
+            src.sendSystemMessage(msg("§7---- §e/" + cmd + " §7----"));
             for (String l : lines) {
                 src.sendSystemMessage(Component.literal("§7" + l));
             }
-            src.sendSystemMessage(Component.literal("§7----------------"));
+            src.sendSystemMessage(msg("§7----------------"));
         }));
         if (!proc.sendCommand(cmd)) {
             proc.clearCapture(); // 发送失败，取消捕获窗口
-            src.sendSystemMessage(Component.literal("§c命令发送失败，查看日志。"));
+            src.sendSystemMessage(msg("§c命令发送失败，请检查日志。"));
             return 0;
         }
-        src.sendSystemMessage(Component.literal("§7已发送至镜像服: §e/" + cmd));
+        src.sendSystemMessage(msg("§7已发送至镜像服: §e/" + cmd));
         return 1;
     }
 
@@ -259,24 +266,24 @@ public class MirrorCommands {
         var cloner = mgr.getCloner();
 
         if (cloner == null) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            src.sendSystemMessage(msg("§c镜像实例未初始化。"));
             return 0;
         }
         var clonerKeys = cloner.listMirrorServerPropertyKeys();
         if (!clonerKeys.contains(key)) {
-            src.sendSystemMessage(Component.literal("§c配置项不存在: §e" + key
+            src.sendSystemMessage(msg("§c配置项不存在: §e" + key
                     + "§c。可用:" + (clonerKeys.isEmpty() ? " 无" : "")));
             if (!clonerKeys.isEmpty()) {
-                src.sendSystemMessage(Component.literal("§7" + String.join("§7, §e", clonerKeys)));
+                src.sendSystemMessage(msg("§7" + String.join("§7, §e", clonerKeys)));
             }
             return 0;
         }
         if (!cloner.setMirrorServerProperty(key, value)) {
-            src.sendSystemMessage(Component.literal("§c修改失败，查看日志。"));
+            src.sendSystemMessage(msg("§c修改失败，请检查日志。"));
             return 0;
         }
-        src.sendSystemMessage(Component.literal("§a已修改镜像服配置 §e" + key + "§a = §e" + value));
-        src.sendSystemMessage(Component.literal("§7重启镜像服后生效（/mirror restart）"));
+        src.sendSystemMessage(msg("§a已修改镜像服配置 §e" + key + "§a = §e" + value));
+        src.sendSystemMessage(msg("§7重启镜像服后生效（/mirror restart）"));
         return 1;
     }
 
@@ -285,7 +292,7 @@ public class MirrorCommands {
     private static int returnToMain(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
         if (!(src.getEntity() instanceof ServerPlayer player)) {
-            src.sendSystemMessage(Component.literal("§c此命令只能由玩家执行。"));
+            src.sendSystemMessage(msg("§c此命令只能由玩家执行。"));
             return 0;
         }
         PlayerTransferManager.transferToMain(player);

@@ -58,7 +58,9 @@ public class MirrorProcess {
     }
 
     public State getState() { return state.get(); }
-    public boolean isRunning() { return running.get(); }
+    public boolean isRunning() {
+        return running.get() && process != null && process.isAlive();
+    }
     /** 镜像服 MC 是否已启动完成（Done），可以接受玩家连接 */
     public boolean isReady() { return ready.get(); }
     public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
@@ -120,9 +122,16 @@ public class MirrorProcess {
      * 需要先确定 server jar 文件名。
      */
     public boolean start() {
-        if (!state.compareAndSet(State.STOPPED, State.STARTING)) {
-            LOGGER.warn("[Process] Cannot start, state={}", state.get());
-            return false;
+        // 允许从 STOPPED 或 ERROR 状态重新尝试启动
+        while (true) {
+            State current = state.get();
+            if (current != State.STOPPED && current != State.ERROR) {
+                LOGGER.warn("[Process] Cannot start, state={}", current);
+                return false;
+            }
+            if (state.compareAndSet(current, State.STARTING)) {
+                break;
+            }
         }
 
         try {
@@ -136,13 +145,15 @@ public class MirrorProcess {
             // 用主服同一份 JVM（java.home），避免 PATH 里 java 版本不符
             String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
 
-            ProcessBuilder pb = new ProcessBuilder(
-                    javaBin,
-                    "-Dmirror.instance=true",       // 镜像模式自识别
-                    "-Xms2G", "-Xmx4G",              // 镜像服内存
-                    "-jar", serverJar.getFileName().toString(),
-                    "nogui"
-            );
+            List<String> commandList = new ArrayList<>();
+            commandList.add(javaBin);
+            commandList.add("-Dmirror.instance=true"); // 镜像模式自识别
+            commandList.addAll(config.getJvmArgs());   // 镜像服 JVM 参数配置
+            commandList.add("-jar");
+            commandList.add(serverJar.getFileName().toString());
+            commandList.add("nogui");
+
+            ProcessBuilder pb = new ProcessBuilder(commandList);
             pb.directory(mirrorDir.toFile());
             pb.redirectErrorStream(true); // stderr 合并到 stdout
             // 显式隔离 stdin：镜像服 stdin 是独立 PIPE，不继承主服 System.in
@@ -199,6 +210,23 @@ public class MirrorProcess {
      */
     public void stop() {
         if (state.get() == State.STOPPED) return;
+        if (state.get() == State.ERROR) {
+            // 如果处于异常状态且底层进程已死，直接重置为 STOPPED
+            if (process == null || !process.isAlive()) {
+                process = null;
+                stdin = null;
+                running.set(false);
+                ready.set(false);
+                state.set(State.STOPPED);
+                LOGGER.info("[Process] Reset state from ERROR to STOPPED");
+                Runnable cb = stopCallback;
+                if (cb != null) {
+                    stopCallback = null;
+                    cb.run();
+                }
+                return;
+            }
+        }
         state.set(State.STOPPING);
 
         // 先发 stop 命令（此时 running 仍为 true，sendCommand 才能生效）
@@ -242,6 +270,17 @@ public class MirrorProcess {
      */
     public void stopAndWait() {
         if (state.get() == State.STOPPED) return;
+        if (state.get() == State.ERROR) {
+            if (process == null || !process.isAlive()) {
+                process = null;
+                stdin = null;
+                running.set(false);
+                ready.set(false);
+                state.set(State.STOPPED);
+                LOGGER.info("[Process] Reset state from ERROR to STOPPED (sync)");
+                return;
+            }
+        }
         state.set(State.STOPPING);
 
         sendCommand("stop");

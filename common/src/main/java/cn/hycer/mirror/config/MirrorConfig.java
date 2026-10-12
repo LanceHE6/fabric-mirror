@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Mirror 主配置，对应 config/mirror/mirror.json
@@ -76,7 +78,10 @@ public class MirrorConfig {
                 "main_public_port": 0,
 
                 // 首次 /mirror start 时自动克隆主服（默认 true）
-                "auto_clone": true
+                "auto_clone": true,
+
+                // 镜像服 JVM 内存分配参数（默认 "-Xms2G", "-Xmx4G"）
+                "jvm_args": ["-Xms2G", "-Xmx4G"]
               }
             }
             """;
@@ -146,6 +151,14 @@ public class MirrorConfig {
     @JsonIgnore
     public boolean isAutoClone() { return mirror.autoClone; }
 
+    @JsonIgnore
+    public List<String> getJvmArgs() {
+        if (mirror.jvmArgs == null || mirror.jvmArgs.isEmpty()) {
+            return List.of("-Xms2G", "-Xmx4G");
+        }
+        return mirror.jvmArgs;
+    }
+
     /**
      * 判断当前运行的是否为镜像服（通过 JVM 属性 -Dmirror.instance=true）。
      */
@@ -191,5 +204,9 @@ public class MirrorConfig {
         /** 首次 /mirror start 时自动克隆主服 */
         @JsonProperty("auto_clone")
         private boolean autoClone = true;
+
+        /** 镜像服 JVM 参数 */
+        @JsonProperty("jvm_args")
+        private List<String> jvmArgs = new ArrayList<>(List.of("-Xms2G", "-Xmx4G"));
     }
 }

@@ -1,5 +1,6 @@
 package cn.hycer.mirror.sync;
 
+import cn.hycer.mirror.command.MirrorCommands;
 import cn.hycer.mirror.config.MirrorConfig;
 import cn.hycer.mirror.core.MirrorInstanceManager;
 import net.minecraft.commands.CommandSourceStack;
@@ -30,17 +31,17 @@ public class WorldSyncManager {
         var mgr = MirrorInstanceManager.getInstance();
         var cloner = mgr.getCloner();
         if (cloner == null) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            src.sendSystemMessage(MirrorCommands.msg("§c镜像实例未初始化。"));
             return;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在同步地图..."));
+        src.sendSystemMessage(MirrorCommands.msg("§6正在同步地图..."));
 
         new Thread(() -> {
             var server = src.getServer();
             try {
                 // 0. 主服线程强制刷盘 + 暂停自动保存（避免复制期间主服写文件导致锁冲突）
-                src.sendSystemMessage(Component.literal("§7保存主服世界..."));
+                src.sendSystemMessage(MirrorCommands.msg("§7保存主服世界..."));
                 CompletableFuture<Void> saveFuture = new CompletableFuture<>();
                 server.execute(() -> {
                     try {
@@ -55,7 +56,7 @@ public class WorldSyncManager {
                 try {
                     // 1. 若镜像服运行，先同步停止（确保进程退出、世界文件解锁）
                     if (mgr.isRunning()) {
-                        src.sendSystemMessage(Component.literal("§7停止镜像服以同步地图..."));
+                        src.sendSystemMessage(MirrorCommands.msg("§7停止镜像服以同步地图..."));
                         mgr.stopAndWait();
                     }
 
@@ -63,19 +64,19 @@ public class WorldSyncManager {
                     Path mainWorld = server.getServerDirectory().resolve("world");
                     Path mirrorWorld = cloner.getMirrorDir().resolve("world");
 
-                    src.sendSystemMessage(Component.literal("§7复制世界文件..."));
+                    src.sendSystemMessage(MirrorCommands.msg("§7复制世界文件..."));
                     long bytes = copyWorld(mainWorld, mirrorWorld);
 
-                    src.sendSystemMessage(Component.literal("§a地图同步完成！(§e"
+                    src.sendSystemMessage(MirrorCommands.msg("§a地图同步完成！(§e"
                             + (bytes / 1024 / 1024) + " MB§a)"));
 
                     // 3. 重启镜像服（等 Done 后提示完成）
-                    src.sendSystemMessage(Component.literal("§7重启镜像服..."));
+                    src.sendSystemMessage(MirrorCommands.msg("§7重启镜像服..."));
                     mgr.start(
                             () -> server.execute(() ->
-                                    src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                                    src.sendSystemMessage(MirrorCommands.msg("§a镜像服已重启完成！"))),
                             () -> server.execute(() ->
-                                    src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。")))
+                                    src.sendSystemMessage(MirrorCommands.msg("§c镜像服重启失败，请检查日志。")))
                     );
                 } finally {
                     // 恢复主服自动保存
@@ -84,7 +85,7 @@ public class WorldSyncManager {
 
             } catch (Exception e) {
                 LOGGER.error("[Sync] Map sync failed", e);
-                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
+                src.sendSystemMessage(MirrorCommands.msg("§c同步失败: " + e.getMessage()));
             }
         }, "Mirror-Sync-Map-Thread").start();
     }
@@ -96,11 +97,11 @@ public class WorldSyncManager {
         var mgr = MirrorInstanceManager.getInstance();
         var cloner = mgr.getCloner();
         if (cloner == null) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            src.sendSystemMessage(MirrorCommands.msg("§c镜像实例未初始化。"));
             return;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在同步配置..."));
+        src.sendSystemMessage(MirrorCommands.msg("§6正在同步配置..."));
 
         new Thread(() -> {
             var server = src.getServer();
@@ -111,20 +112,20 @@ public class WorldSyncManager {
                 // 只同步 config 目录（模组配置），不碰 jar/mods/world/server.properties
                 boolean synced = cloner.syncConfigOnly();
                 if (!synced) {
-                    src.sendSystemMessage(Component.literal("§c配置同步失败。"));
+                    src.sendSystemMessage(MirrorCommands.msg("§c配置同步失败。"));
                     return;
                 }
-                src.sendSystemMessage(Component.literal("§a配置已同步，重启镜像服..."));
+                src.sendSystemMessage(MirrorCommands.msg("§a配置已同步，重启镜像服..."));
                 // 等 Done 后提示重启完成
                 mgr.start(
                         () -> server.execute(() ->
-                                src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                                src.sendSystemMessage(MirrorCommands.msg("§a镜像服已重启完成！"))),
                         () -> server.execute(() ->
-                                src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。")))
+                                src.sendSystemMessage(MirrorCommands.msg("§c镜像服重启失败，请检查日志。")))
                 );
             } catch (Exception e) {
                 LOGGER.error("[Sync] Config sync failed", e);
-                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
+                src.sendSystemMessage(MirrorCommands.msg("§c同步失败: " + e.getMessage()));
             }
         }, "Mirror-Sync-Config-Thread").start();
     }
@@ -136,11 +137,11 @@ public class WorldSyncManager {
         var mgr = MirrorInstanceManager.getInstance();
         var cloner = mgr.getCloner();
         if (cloner == null) {
-            src.sendSystemMessage(Component.literal("§c镜像实例未初始化。"));
+            src.sendSystemMessage(MirrorCommands.msg("§c镜像实例未初始化。"));
             return;
         }
 
-        src.sendSystemMessage(Component.literal("§6正在同步模组..."));
+        src.sendSystemMessage(MirrorCommands.msg("§6正在同步模组..."));
 
         new Thread(() -> {
             var server = src.getServer();
@@ -151,19 +152,19 @@ public class WorldSyncManager {
                 // 完整对齐主服 mods/（复制+覆盖+删除镜像服多余 mod），不碰其它内容
                 boolean synced = cloner.syncModsOnly();
                 if (!synced) {
-                    src.sendSystemMessage(Component.literal("§c模组同步失败。"));
+                    src.sendSystemMessage(MirrorCommands.msg("§c模组同步失败。"));
                     return;
                 }
-                src.sendSystemMessage(Component.literal("§a模组已同步，重启镜像服..."));
+                src.sendSystemMessage(MirrorCommands.msg("§a模组已同步，重启镜像服..."));
                 // 等 Done 后提示重启完成
                 mgr.start(
                         () -> server.execute(() ->
-                                src.sendSystemMessage(Component.literal("§a镜像服已重启完成！"))),
+                                src.sendSystemMessage(MirrorCommands.msg("§a镜像服已重启完成！"))),
                         () -> server.execute(() ->
-                                src.sendSystemMessage(Component.literal("§c镜像服重启失败，查看日志。"))));
+                                src.sendSystemMessage(MirrorCommands.msg("§c镜像服重启失败，请检查日志。"))));
             } catch (Exception e) {
                 LOGGER.error("[Sync] Mod sync failed", e);
-                src.sendSystemMessage(Component.literal("§c同步失败: " + e.getMessage()));
+                src.sendSystemMessage(MirrorCommands.msg("§c同步失败: " + e.getMessage()));
             }
         }, "Mirror-Sync-Mod-Thread").start();
     }
