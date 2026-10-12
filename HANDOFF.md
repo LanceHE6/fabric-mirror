@@ -27,7 +27,7 @@
 - JDK 25（`/opt/jdk-25`，MC 26.2 硬性要求 Java 25）
 - Gradle 9.5.0，Fabric Loom 1.17-SNAPSHOT
 - MC 26.2 使用 Yarn v2 映射（类名是 intermediary 名，不是 Mojang 名）
-- 构建产物：`mc-26.2/build/libs/mirror-mc26.2-0.2.0-Alpha.jar`
+- 构建产物：`mc-26.2/build/libs/mirror-mc26.2-0.3.0.jar`
 
 **开发机**：Linux `/home/hml/code/mirror/`
 **用户生产/测试环境**：Windows `D:\MCCC\`（已解压一份到 `/home/hml/code/mirror/MCCC/` 用于本地测试，该目录已被 .gitignore 忽略）
@@ -218,10 +218,10 @@ export JAVA_HOME=/opt/jdk-25
 ./gradlew :mc-26.3:compileJava --no-daemon   # 只编 26.3，fail fast
 
 # 产物
-ls dist/mirror-mc26.3-0.2.0-Alpha.jar
+ls dist/mirror-mc26.3-0.3.0.jar
 
 # 复制到测试环境（26.3 主服）
-cp dist/mirror-mc26.3-0.2.0-Alpha.jar <主服目录>/mods/
+cp dist/mirror-mc26.3-0.3.0.jar <主服目录>/mods/
 ```
 
 > 注意：`maven.fabricmc.net` 偶发 TLS handshake 失败（机房出口抖动）。

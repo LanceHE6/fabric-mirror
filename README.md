@@ -26,7 +26,7 @@
 ```bash
 export JAVA_HOME=/opt/jdk-25
 ./gradlew buildAll            # 构建全部版本并收集到 dist/
-# JAR: dist/mirror-mc26.3-0.2.0-Alpha.jar（单版本：./gradlew :mc-26.3:build）
+# JAR: dist/mirror-mc26.3-0.3.0.jar（单版本：./gradlew :mc-26.3:build）
 ```
 
 ### 安装
