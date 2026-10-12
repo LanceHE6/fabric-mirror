@@ -52,6 +52,13 @@ public class MirrorProcess {
     private volatile long captureStartMs;
     private volatile long captureTimeoutMs;
 
+    /** 镜像服就绪（Done）的时间戳（毫秒），未就绪或已停止时为 0 */
+    private volatile long readyTimestamp = 0;
+
+    /** 缓存的镜像服在线玩家状态（如 "0/50"） */
+    private volatile String cachedPlayerCount = "未知";
+    private volatile long lastPlayerCountUpdateMs = 0;
+
     public MirrorProcess(Path mirrorDir, MirrorConfig config) {
         this.mirrorDir = mirrorDir;
         this.config = config;
@@ -63,6 +70,54 @@ public class MirrorProcess {
     }
     /** 镜像服 MC 是否已启动完成（Done），可以接受玩家连接 */
     public boolean isReady() { return ready.get(); }
+    public long getReadyTimestamp() { return readyTimestamp; }
+    public String getCachedPlayerCount() { return cachedPlayerCount; }
+
+    /**
+     * 刷新镜像服在线玩家数量（发送 list 命令并解析控制台返回）。
+     * 限流：2 秒内直接返回缓存，避免频繁请求 stdin。
+     */
+    public void queryPlayerCount(Consumer<String> callback) {
+        if (!isReady()) {
+            if (callback != null) callback.accept(null);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastPlayerCountUpdateMs < 2000 && !"未知".equals(cachedPlayerCount)) {
+            if (callback != null) callback.accept(cachedPlayerCount);
+            return;
+        }
+
+        captureOutput(2500, lines -> {
+            for (String l : lines) {
+                // 原版格式："There are X of a max of Y players online:"
+                // 或者其他可能："There are X/Y players online"
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("There are (\\d+) of a max of (\\d+) players online")
+                        .matcher(l);
+                if (m.find()) {
+                    cachedPlayerCount = m.group(1) + "/" + m.group(2);
+                    lastPlayerCountUpdateMs = System.currentTimeMillis();
+                    if (callback != null) callback.accept(cachedPlayerCount);
+                    return;
+                }
+                java.util.regex.Matcher m2 = java.util.regex.Pattern
+                        .compile("(\\d+)/(\\d+)").matcher(l);
+                if (m2.find()) {
+                    cachedPlayerCount = m2.group(1) + "/" + m2.group(2);
+                    lastPlayerCountUpdateMs = System.currentTimeMillis();
+                    if (callback != null) callback.accept(cachedPlayerCount);
+                    return;
+                }
+            }
+            if (callback != null) callback.accept(cachedPlayerCount);
+        });
+
+        if (!sendCommand("list")) {
+            clearCapture();
+            if (callback != null) callback.accept(cachedPlayerCount);
+        }
+    }
     public void setLogListener(Consumer<String> listener) { this.logListener = listener; }
     public void setStopCallback(Runnable cb) { this.stopCallback = cb; }
     public void setReadyCallback(Runnable cb) { this.readyCallback = cb; }
@@ -177,6 +232,8 @@ public class MirrorProcess {
 
             running.set(true);
             ready.set(false); // 等待 Done 信号才就绪
+            readyTimestamp = 0;
+            cachedPlayerCount = "未知";
             state.set(State.RUNNING);
             LOGGER.info("[Process] Mirror process started (pid={})", process.pid());
             return true;
@@ -217,6 +274,8 @@ public class MirrorProcess {
                 stdin = null;
                 running.set(false);
                 ready.set(false);
+                readyTimestamp = 0;
+                cachedPlayerCount = "未知";
                 state.set(State.STOPPED);
                 LOGGER.info("[Process] Reset state from ERROR to STOPPED");
                 Runnable cb = stopCallback;
@@ -235,6 +294,8 @@ public class MirrorProcess {
         // 标记停止中，阻止后续命令
         running.set(false);
         ready.set(false);
+        readyTimestamp = 0;
+        cachedPlayerCount = "未知";
 
         // 后台线程等待进程退出，超时强杀
         Thread waiter = new Thread(() -> {
@@ -286,6 +347,8 @@ public class MirrorProcess {
         sendCommand("stop");
         running.set(false);
         ready.set(false);
+        readyTimestamp = 0;
+        cachedPlayerCount = "未知";
 
         try {
             boolean exited = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
@@ -340,6 +403,7 @@ public class MirrorProcess {
                 // 检测启动完成信号
                 if (line.contains("Done (")) {
                     ready.set(true);
+                    readyTimestamp = System.currentTimeMillis();
                     LOGGER.info("[Process] Mirror server is ready");
                     Runnable cb = readyCallback;
                     if (cb != null) {
@@ -368,6 +432,8 @@ public class MirrorProcess {
             boolean wasReady = ready.get();
             running.set(false);
             ready.set(false);
+            readyTimestamp = 0;
+            cachedPlayerCount = "未知";
             if (state.get() != State.STOPPING && state.get() != State.STOPPED) {
                 state.set(State.ERROR);
                 // 进程退出但从未 Done，视为启动失败

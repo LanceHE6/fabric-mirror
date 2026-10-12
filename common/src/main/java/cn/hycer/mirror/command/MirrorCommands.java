@@ -85,14 +85,49 @@ public class MirrorCommands {
 
     private static int showStatus(CommandContext<CommandSourceStack> ctx) {
         var src = ctx.getSource();
+        var server = src.getServer();
         var mgr = MirrorInstanceManager.getInstance();
         var state = mgr.getState();
+        var proc = mgr.getProcess();
+
+        if (state == MirrorProcess.State.RUNNING && proc != null && proc.isReady()) {
+            proc.queryPlayerCount(players -> server.execute(() -> {
+                sendDetailedStatus(src, state, proc, players);
+            }));
+        } else {
+            sendDetailedStatus(src, state, proc, null);
+        }
+        return 1;
+    }
+
+    private static void sendDetailedStatus(CommandSourceStack src,
+                                           MirrorProcess.State state,
+                                           MirrorProcess proc,
+                                           String playerCount) {
         src.sendSystemMessage(msg("§6===== 镜像实例状态 ====="));
         src.sendSystemMessage(msg("  状态: §e" + stateLabel(state)));
+
+        if (state == MirrorProcess.State.RUNNING && proc != null && proc.isReady()) {
+            String pStr = playerCount != null ? playerCount : proc.getCachedPlayerCount();
+            src.sendSystemMessage(msg("  玩家: §b" + pStr));
+
+            long readyMs = proc.getReadyTimestamp();
+            if (readyMs > 0) {
+                long uptimeSec = Math.max(0, (System.currentTimeMillis() - readyMs) / 1000);
+                src.sendSystemMessage(msg("  运行时间: §a" + formatUptime(uptimeSec)));
+            }
+        }
+
         if (state == MirrorProcess.State.ERROR) {
             src.sendSystemMessage(msg("§c提示: 镜像实例处于异常退出状态，可执行 §e/mirror start §c重新启动，或执行 §e/mirror stop §c重置状态。"));
         }
-        return 1;
+    }
+
+    private static String formatUptime(long seconds) {
+        long h = seconds / 3600;
+        long m = (seconds % 3600) / 60;
+        long s = seconds % 60;
+        return String.format("%02dh%02dm%02ds", h, m, s);
     }
 
     private static String stateLabel(MirrorProcess.State state) {
